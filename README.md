@@ -38,25 +38,21 @@ Settings are stored in:
 ## Controls
 
 - Drag the **header** (or pill) to move the window.
-- **●** connection status — green after a successful refresh, red on auth/API error.
-- **−** minimize to a small pill (`● 42%`). Click the pill to expand again.
-- Gear icon opens LAYOUT settings (changes apply live).
-- **↻** refresh now.
+- **●** green/red connection status (error cue text only when needed — Auth / Offline / Error).
+- Click the **pill** to expand; **−** or **Esc** to collapse.
+- Gear icon opens settings (Appearance / Behavior). Changes apply live.
+- **↻** refresh now (pulses while fetching).
 - **✕** close.
 - Right-click the floater to open settings (useful if the header is hidden).
 
-## Settings (LAYOUT)
+Progress bars shift color by urgency: calm under 70%, warn 70–90%, critical at 90%+.
 
-| Option | What it does |
-|--------|----------------|
-| **Density** | Full (Total + Auto + API), Compact (Total only), or Minimal (pill) |
-| **Minimized %** | Which metric the pill shows: Total, Auto, API, or Worst |
-| **Always on top** | Keep the floater above other windows |
-| **Click-through** | Mouse clicks pass through the floater (settings window still works so you can turn this off) |
-| **Show header** | Title and control buttons |
-| **Show reset countdown** | Time until billing cycle end when the API provides it |
-| **Show stale-data badge** | Warning when the last successful update is older than ~6 minutes |
-| **Start minimized** | Open as the pill on launch |
+## Settings
+
+| Group | Options |
+|--------|---------|
+| **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, reset countdown, stale badge |
+| **Behavior** | Always on top, click-through, start as pill |
 
 ## Dev tests
 

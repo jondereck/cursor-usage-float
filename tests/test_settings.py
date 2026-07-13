@@ -88,5 +88,19 @@ def test_resolve_minimized_percent_modes() -> None:
 
 
 def test_format_percent() -> None:
-    assert format_percent(42.0) == "42%"
+    assert format_percent(42.0) == "42.0%"
     assert format_percent(42.5) == "42.5%"
+    assert format_percent(12.9) == "12.9%"
+
+
+def test_bar_color_thresholds() -> None:
+    from theme import BAR_FG, CRITICAL, WARN, bar_color_for_percent
+
+    assert bar_color_for_percent(10).lower() == BAR_FG.lower()
+    assert bar_color_for_percent(39.9).lower() == BAR_FG.lower()
+    # Mid ramp toward warn (visible before 80%)
+    mid = bar_color_for_percent(60).lower()
+    assert mid != BAR_FG.lower()
+    assert mid != CRITICAL.lower()
+    assert bar_color_for_percent(80).lower() == WARN.lower()
+    assert bar_color_for_percent(100).lower() == CRITICAL.lower()

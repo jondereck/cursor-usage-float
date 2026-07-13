@@ -87,9 +87,6 @@ def resolve_minimized_percent(usage: PlanUsage, metric: str) -> float:
 
 
 def format_percent(value: float) -> str:
-    shown = int(round(value)) if abs(value - round(value)) < 0.05 else value
-    if isinstance(shown, float):
-        text = f"{shown:.1f}".rstrip("0").rstrip(".")
-    else:
-        text = str(shown)
-    return f"{text}%"
+    """Always show one decimal place (e.g. 42.9%)."""
+    value = max(0.0, min(100.0, float(value)))
+    return f"{value:.1f}%"
