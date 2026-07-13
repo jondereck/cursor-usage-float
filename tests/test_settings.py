@@ -44,6 +44,7 @@ def test_round_trip_save_load(tmp_path: Path) -> None:
         show_stale_badge=False,
         minimized_metric="worst",
         start_minimized=True,
+        start_with_windows=True,
     )
     save_settings(original, path)
     loaded = load_settings(path)
@@ -66,6 +67,19 @@ def test_unknown_keys_ignored(tmp_path: Path) -> None:
     assert loaded.density == "minimal"
     assert loaded.minimized_metric == "api"
     assert loaded.always_on_top is True
+    assert loaded.start_with_windows is False
+
+
+def test_start_with_windows_default_and_legacy(tmp_path: Path) -> None:
+    """Legacy settings.json without start_with_windows keeps default False."""
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"start_minimized": True}),
+        encoding="utf-8",
+    )
+    loaded = load_settings(path)
+    assert loaded.start_minimized is True
+    assert loaded.start_with_windows is False
 
 
 def test_invalid_enum_falls_back(tmp_path: Path) -> None:

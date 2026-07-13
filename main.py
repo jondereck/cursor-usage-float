@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import tkinter as tk
 from datetime import datetime, timezone
+from pathlib import Path
 from tkinter import font as tkfont
 
 from cursor_auth import AuthError
@@ -36,6 +37,7 @@ from theme import (
     bar_color_for_percent,
 )
 from win_clickthrough import set_click_through, set_rounded_corners, toplevel_hwnd
+from win_startup import set_start_with_windows
 
 POLL_MS = 3 * 60 * 1000
 STALE_MS = 2 * POLL_MS
@@ -48,6 +50,7 @@ GEAR_ICON = "\uE713"
 FADE_OUT_MS = 90
 FADE_IN_MS = 110
 FADE_FRAME_MS = 12
+APP_ICON = Path(__file__).resolve().parent / "assets" / "app.ico"
 
 
 def _rounded_rect_coords(
@@ -224,8 +227,15 @@ class UsageFloater(tk.Tk):
         self.configure(bg=BG)
         self.overrideredirect(True)
         self.resizable(False, False)
+        if APP_ICON.is_file():
+            try:
+                self.iconbitmap(str(APP_ICON))
+            except tk.TclError:
+                pass
 
         self.settings = load_settings()
+        if self.settings.start_with_windows:
+            set_start_with_windows(True)
         self._drag_x = 0
         self._drag_y = 0
         self._refreshing = False

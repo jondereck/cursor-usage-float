@@ -23,7 +23,8 @@ class AppSettings:
     show_reset_countdown: bool = True
     show_stale_badge: bool = True
     minimized_metric: str = "total"  # total | auto | api | worst
-    start_minimized: bool = False
+    start_minimized: bool = False  # open hidden (pill) on launch
+    start_with_windows: bool = False
 
 
 def default_settings_path() -> Path:

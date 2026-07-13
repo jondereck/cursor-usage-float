@@ -40,7 +40,7 @@ Settings are stored in:
 - Drag the **header** (or pill) to move the window.
 - **●** green/red connection status (error cue text only when needed — Auth / Offline / Error).
 - Click the **pill** to expand; **−** or **Esc** to collapse.
-- Gear icon opens settings (Appearance / Behavior). Changes apply live.
+- Gear icon opens settings (Appearance / Behavior / Startup). Changes apply live.
 - **↻** refresh now (pulses while fetching).
 - **✕** close.
 - Right-click the floater to open settings (useful if the header is hidden).
@@ -52,7 +52,8 @@ Progress bars shift color by urgency: calm under 70%, warn 70–90%, critical at
 | Group | Options |
 |--------|---------|
 | **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, reset countdown, stale badge |
-| **Behavior** | Always on top, click-through, start as pill |
+| **Behavior** | Always on top, click-through |
+| **Startup** | Start with Windows (HKCU `Run` key `CursorUsageFloat`), Open hidden (pill) |
 
 ## Dev tests
 

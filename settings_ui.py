@@ -6,6 +6,8 @@ import tkinter as tk
 from collections.abc import Callable
 from tkinter import ttk
 
+from pathlib import Path
+
 from settings import (
     DENSITY_OPTIONS,
     METRIC_OPTIONS,
@@ -21,6 +23,9 @@ from theme import (
     SWITCH_ON,
     TEXT,
 )
+from win_startup import set_start_with_windows
+
+APP_ICON = Path(__file__).resolve().parent / "assets" / "app.ico"
 
 DENSITY_LABELS = {
     "full": "Full",
@@ -114,6 +119,11 @@ class SettingsWindow(tk.Toplevel):
 
         self.transient(parent)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        if APP_ICON.is_file():
+            try:
+                self.iconbitmap(str(APP_ICON))
+            except tk.TclError:
+                pass
 
         outer = tk.Frame(self, bg=BG, padx=18, pady=18)
         outer.pack(fill="both", expand=True)
@@ -168,9 +178,15 @@ class SettingsWindow(tk.Toplevel):
         for attr, label in (
             ("always_on_top", "Always on top"),
             ("click_through", "Click-through"),
-            ("start_minimized", "Start as pill"),
         ):
             self._add_switch(behavior, label, attr)
+
+        startup = self._section(outer, "Startup")
+        for attr, label in (
+            ("start_with_windows", "Start with Windows"),
+            ("start_minimized", "Open hidden (pill)"),
+        ):
+            self._add_switch(startup, label, attr)
 
         self.update_idletasks()
         w = max(self.winfo_reqwidth(), 300)
@@ -260,7 +276,10 @@ class SettingsWindow(tk.Toplevel):
         def on_toggle() -> None:
             if self._updating:
                 return
-            setattr(self.settings, attr, bool(var.get()))
+            enabled = bool(var.get())
+            setattr(self.settings, attr, enabled)
+            if attr == "start_with_windows":
+                set_start_with_windows(enabled)
             self._persist()
 
         ToggleSwitch(row, var, command=on_toggle).pack(side="right")
