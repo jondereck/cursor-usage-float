@@ -1,0 +1,2 @@
+# Stdlib-only (tkinter + urllib + sqlite3). Kept for portable venv convenience.
+# No third-party packages required.
