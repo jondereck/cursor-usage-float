@@ -12,11 +12,12 @@ from cursor_auth import AuthError
 from cursor_usage import PlanUsage, UsageError, fetch_current_period_usage
 from settings import (
     AppSettings,
+    effective_click_through,
     format_percent,
     load_settings,
     resolve_minimized_percent,
 )
-from settings_ui import open_settings
+from settings_ui import SettingsWindow, open_settings
 from theme import (
     BAR_BG,
     BG,
@@ -36,7 +37,9 @@ from theme import (
     USAGE_MARK,
     bar_color_for_percent,
 )
+from win_app_icon import apply_tk_icon, set_app_user_model_id
 from win_clickthrough import set_click_through, set_rounded_corners, toplevel_hwnd
+from win_hotkey import GlobalHotkey
 from win_startup import set_start_with_windows
 
 POLL_MS = 3 * 60 * 1000
@@ -227,11 +230,7 @@ class UsageFloater(tk.Tk):
         self.configure(bg=BG)
         self.overrideredirect(True)
         self.resizable(False, False)
-        if APP_ICON.is_file():
-            try:
-                self.iconbitmap(str(APP_ICON))
-            except tk.TclError:
-                pass
+        apply_tk_icon(self, APP_ICON)
 
         self.settings = load_settings()
         if self.settings.start_with_windows:
@@ -251,6 +250,9 @@ class UsageFloater(tk.Tk):
         self._pulse_on = False
         self._header_buttons: list[tk.Button] = []
         self._was_pill = bool(self._minimized or self.settings.density == "minimal")
+        self._settings_open = False
+        self._settings_win: SettingsWindow | None = None
+        self._click_through_hotkey: GlobalHotkey | None = None
 
         self.attributes("-topmost", bool(self.settings.always_on_top))
 
@@ -258,6 +260,7 @@ class UsageFloater(tk.Tk):
         self._apply_settings_side_effects()
         self._apply_layout(animate=False)
         self._place_top_right()
+        self._register_click_through_hotkey()
         self.after(200, self.refresh_async)
         self.after(POLL_MS, self._schedule_poll)
         self.after(30_000, self._schedule_stale_check)
@@ -468,7 +471,20 @@ class UsageFloater(tk.Tk):
         return btn
 
     def _open_settings(self) -> None:
-        open_settings(self, self.settings, self._on_settings_changed)
+        hint = ""
+        if self._click_through_hotkey is not None:
+            hint = self._click_through_hotkey.shortcut_label
+        self._settings_win = open_settings(
+            self,
+            self.settings,
+            self._on_settings_changed,
+            on_visibility=self._on_settings_visibility,
+            hotkey_hint=hint,
+        )
+
+    def _on_settings_visibility(self, open_: bool) -> None:
+        self._settings_open = bool(open_)
+        self._apply_settings_side_effects()
 
     def _on_settings_changed(self, settings: AppSettings) -> None:
         self.settings = settings
@@ -485,7 +501,25 @@ class UsageFloater(tk.Tk):
         except tk.TclError:
             pass
         hwnd = toplevel_hwnd(self)
-        set_click_through(hwnd, bool(self.settings.click_through))
+        set_click_through(
+            hwnd,
+            effective_click_through(self.settings.click_through, self._settings_open),
+        )
+
+    def _register_click_through_hotkey(self) -> None:
+        hotkey = GlobalHotkey(self, callback=self._hotkey_open_settings)
+        if hotkey.register():
+            self._click_through_hotkey = hotkey
+
+    def _hotkey_open_settings(self) -> None:
+        """Escape hatch: open Settings (soft-unlocks click-through while open)."""
+        self._open_settings()
+
+    def destroy(self) -> None:
+        if self._click_through_hotkey is not None:
+            self._click_through_hotkey.unregister()
+            self._click_through_hotkey = None
+        super().destroy()
 
     def _toggle_minimized(self) -> None:
         if self._animating:
@@ -926,12 +960,15 @@ def _parse_billing_end(raw: str) -> datetime | None:
 
 
 def main() -> None:
+    set_app_user_model_id()
     app = UsageFloater()
     try:
         tkfont.nametofont("TkDefaultFont").configure(family="Segoe UI", size=9)
     except tk.TclError:
         pass
     app.after(100, app._apply_settings_side_effects)
+    # Re-apply icon after the HWND is fully realized (taskbar / alt-tab).
+    app.after(100, lambda: apply_tk_icon(app, APP_ICON))
     app.mainloop()
 
 

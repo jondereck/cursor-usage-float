@@ -41,6 +41,8 @@ Settings are stored in:
 - **●** green/red connection status (error cue text only when needed — Auth / Offline / Error).
 - Click the **pill** to expand; **−** or **Esc** to collapse.
 - Gear icon opens settings (Appearance / Behavior / Startup). Changes apply live.
+- Global hotkey opens settings even with click-through on (tries `Ctrl+Shift+U`, then `Ctrl+Alt+Shift+U`, then `Ctrl+Shift+F12`).
+- Opening Settings temporarily disables click-through until the window closes.
 - **↻** refresh now (pulses while fetching).
 - **✕** close.
 - Right-click the floater to open settings (useful if the header is hidden).

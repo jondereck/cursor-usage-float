@@ -8,6 +8,7 @@ from pathlib import Path
 from cursor_usage import PlanUsage
 from settings import (
     AppSettings,
+    effective_click_through,
     format_percent,
     load_settings,
     resolve_minimized_percent,
@@ -105,6 +106,13 @@ def test_format_percent() -> None:
     assert format_percent(42.0) == "42.0%"
     assert format_percent(42.5) == "42.5%"
     assert format_percent(12.9) == "12.9%"
+
+
+def test_effective_click_through() -> None:
+    assert effective_click_through(False, False) is False
+    assert effective_click_through(False, True) is False
+    assert effective_click_through(True, False) is True
+    assert effective_click_through(True, True) is False
 
 
 def test_bar_color_thresholds() -> None:

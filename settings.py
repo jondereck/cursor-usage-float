@@ -91,3 +91,8 @@ def format_percent(value: float) -> str:
     """Always show one decimal place (e.g. 42.9%)."""
     value = max(0.0, min(100.0, float(value)))
     return f"{value:.1f}%"
+
+
+def effective_click_through(click_through: bool, settings_open: bool) -> bool:
+    """Click-through is soft-disabled while Settings is open."""
+    return bool(click_through) and not bool(settings_open)

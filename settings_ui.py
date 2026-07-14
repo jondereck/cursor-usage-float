@@ -23,6 +23,7 @@ from theme import (
     SWITCH_ON,
     TEXT,
 )
+from win_app_icon import apply_tk_icon
 from win_startup import set_start_with_windows
 
 APP_ICON = Path(__file__).resolve().parent / "assets" / "app.ico"
@@ -108,6 +109,8 @@ class SettingsWindow(tk.Toplevel):
         parent: tk.Misc,
         settings: AppSettings,
         on_change: Callable[[AppSettings], None],
+        on_visibility: Callable[[bool], None] | None = None,
+        hotkey_hint: str = "",
     ) -> None:
         super().__init__(parent)
         self.title("Cursor Usage")
@@ -115,15 +118,13 @@ class SettingsWindow(tk.Toplevel):
         self.resizable(False, False)
         self.settings = settings
         self._on_change = on_change
+        self._on_visibility = on_visibility
         self._updating = False
 
         self.transient(parent)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        if APP_ICON.is_file():
-            try:
-                self.iconbitmap(str(APP_ICON))
-            except tk.TclError:
-                pass
+        apply_tk_icon(self, APP_ICON)
+        self.after(50, lambda: apply_tk_icon(self, APP_ICON))
 
         outer = tk.Frame(self, bg=BG, padx=18, pady=18)
         outer.pack(fill="both", expand=True)
@@ -138,9 +139,10 @@ class SettingsWindow(tk.Toplevel):
         )
         title.pack(fill="x")
 
+        hint = f"Changes apply live. Hotkey: {hotkey_hint}" if hotkey_hint else "Changes apply live."
         subtitle = tk.Label(
             outer,
-            text="Changes apply live.",
+            text=hint,
             bg=BG,
             fg=MUTED,
             font=("Segoe UI", 9),
@@ -192,6 +194,8 @@ class SettingsWindow(tk.Toplevel):
         w = max(self.winfo_reqwidth(), 300)
         h = self.winfo_reqheight()
         self.geometry(f"{w}x{h}")
+        if self._on_visibility is not None:
+            self._on_visibility(True)
 
     def _section(self, parent: tk.Misc, title: str) -> tk.Frame:
         wrap = tk.Frame(parent, bg=BG)
@@ -318,20 +322,32 @@ def open_settings(
     parent: tk.Misc,
     settings: AppSettings,
     on_change: Callable[[AppSettings], None],
+    on_visibility: Callable[[bool], None] | None = None,
+    hotkey_hint: str = "",
 ) -> SettingsWindow:
     global _open_window
     if _open_window is not None and _open_window.winfo_exists():
         _open_window.sync_from_settings(settings)
         _open_window.lift()
         _open_window.focus_force()
+        if on_visibility is not None:
+            on_visibility(True)
         return _open_window
 
-    win = SettingsWindow(parent, settings, on_change)
+    win = SettingsWindow(
+        parent,
+        settings,
+        on_change,
+        on_visibility=on_visibility,
+        hotkey_hint=hotkey_hint,
+    )
 
     def _clear(event: object) -> None:
         global _open_window
         if getattr(event, "widget", None) is win:
             _open_window = None
+            if on_visibility is not None:
+                on_visibility(False)
 
     win.bind("<Destroy>", _clear)
     _open_window = win

@@ -19,8 +19,11 @@ if not exist ".venv\Scripts\python.exe" (
   )
 )
 
-REM Stdlib-only app; requirements.txt is intentionally empty of packages.
-".venv\Scripts\python.exe" main.py
+REM Use pythonw so the taskbar shows our app icon, not the Python console icon.
+set "PY=.venv\Scripts\pythonw.exe"
+if not exist "%PY%" set "PY=.venv\Scripts\python.exe"
+
+"%PY%" main.py
 if errorlevel 1 (
   echo.
   echo Widget exited with an error.
