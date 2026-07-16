@@ -27,5 +27,8 @@ if not exist "%PY%" set "PY=.venv\Scripts\python.exe"
 if errorlevel 1 (
   echo.
   echo Widget exited with an error.
+  echo.
+  echo Re-running with console to show the traceback...
+  ".venv\Scripts\python.exe" main.py
   pause
 )

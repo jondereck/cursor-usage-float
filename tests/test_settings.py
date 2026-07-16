@@ -91,7 +91,7 @@ def test_invalid_enum_falls_back(tmp_path: Path) -> None:
     )
     loaded = load_settings(path)
     assert loaded.density == "full"
-    assert loaded.minimized_metric == "total"
+    assert loaded.minimized_metric == "pace"
 
 
 def test_resolve_minimized_percent_modes() -> None:

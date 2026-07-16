@@ -35,6 +35,50 @@ class PlanUsage:
         return f"{auto}% Auto and {api}% API used"
 
 
+@dataclass(frozen=True)
+class UsageBudget:
+    """Normalized used/remaining for pacing (percent units or cents)."""
+
+    used: float
+    limit: float
+    remaining: float
+    unit: str  # "percent" | "cents"
+
+
+def budget_from_plan(usage: PlanUsage) -> UsageBudget:
+    """
+    Normalize used/remaining for pacing.
+
+    Prefer plan percent (matches the Total bar). Fall back to spend/limit cents
+    only when percent data is missing.
+    """
+    if usage.total_percent is not None and usage.total_percent >= 0:
+        used = float(max(0.0, min(100.0, usage.total_percent)))
+        return UsageBudget(
+            used=used,
+            limit=100.0,
+            remaining=max(0.0, 100.0 - used),
+            unit="percent",
+        )
+
+    if (
+        usage.limit_cents is not None
+        and usage.limit_cents > 0
+        and usage.total_spend_cents is not None
+    ):
+        used = float(max(0, usage.total_spend_cents))
+        limit = float(usage.limit_cents)
+        return UsageBudget(
+            used=used,
+            limit=limit,
+            remaining=max(0.0, limit - used),
+            unit="cents",
+        )
+
+    return UsageBudget(used=0.0, limit=100.0, remaining=100.0, unit="percent")
+
+
+
 def _fmt_pct(value: float) -> str:
     if abs(value - round(value)) < 0.05:
         return str(int(round(value)))

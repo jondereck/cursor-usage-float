@@ -39,6 +39,7 @@ METRIC_LABELS = {
     "auto": "Auto + Composer",
     "api": "API",
     "worst": "Worst",
+    "pace": "Today's pace",
 }
 
 
@@ -171,6 +172,8 @@ class SettingsWindow(tk.Toplevel):
         )
         for attr, label in (
             ("show_header", "Show header"),
+            ("show_total", "Total"),
+            ("show_pace", "Today's pace"),
             ("show_reset_countdown", "Reset countdown"),
             ("show_stale_badge", "Stale-data badge"),
         ):

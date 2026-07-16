@@ -5,6 +5,7 @@ Small **always-on-top** floating window for Windows that shows your Cursor plan 
 - **Total** %
 - **Auto + Composer** %
 - **API** %
+- **Today's pace / soft-stop** — weekday-aware daily budget so you stretch usage to the end of the billing cycle
 
 Portable personal-use tool. No installer. Data stays on your machine.
 
@@ -23,10 +24,18 @@ First run creates a local `.venv` in this folder. You can copy the whole folder 
 2. Calls Cursor’s HTTPS usage endpoint only:  
    `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`
 3. Draws the progress bars and refreshes about every **3 minutes** (↻ for manual refresh).
+4. Tracks daily burn locally and learns Mon–Sun weights (weekdays naturally get more budget if that’s when you use Cursor). Soft-stop states:
+   - **OK** — under 80% of today’s fair share
+   - **WARN** — ≥ 80% (“slow down”)
+   - **STOP** — ≥ 100% (“Stop for now — save allotment for later in the cycle”)
 
 Settings are stored in:
 
 `%APPDATA%\cursor-usage-float\settings.json`
+
+Pace history (for weekday learning) is stored in:
+
+`%APPDATA%\cursor-usage-float\pace-history.json`
 
 ## Safety / privacy
 
@@ -53,7 +62,7 @@ Progress bars shift color by urgency: calm under 70%, warn 70–90%, critical at
 
 | Group | Options |
 |--------|---------|
-| **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, reset countdown, stale badge |
+| **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, **Total** on/off, **Today's pace** on/off, reset countdown, stale badge |
 | **Behavior** | Always on top, click-through |
 | **Startup** | Start with Windows (HKCU `Run` key `CursorUsageFloat`), Open hidden (pill) |
 
@@ -61,7 +70,7 @@ Progress bars shift color by urgency: calm under 70%, warn 70–90%, critical at
 
 ```bat
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest tests\test_settings.py -q
+.\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
 ## Requirements

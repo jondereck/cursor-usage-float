@@ -20,11 +20,35 @@ WARN = "#F59E0B"
 CRITICAL = "#EF4444"
 STALE_BG = "#FEF3C7"
 STALE_FG = "#92400E"
+# Soft-stop badge surfaces
+PACE_OK_BG = "#DCFCE7"
+PACE_OK_FG = "#166534"
+PACE_WARN_BG = "#FEF3C7"
+PACE_WARN_FG = "#92400E"
+PACE_STOP_BG = "#FEE2E2"
+PACE_STOP_FG = "#991B1B"
 SWITCH_ON = "#44403C"
 SWITCH_OFF = "#D6D3D1"
 HOVER = "#E7E5E4"
 MARKER_80 = "#78716C"
 USAGE_MARK = 80.0
+
+
+def pace_badge_colors(state: str) -> tuple[str, str]:
+    """Return (background, foreground) for OK / WARN / STOP badge."""
+    if state == "STOP":
+        return PACE_STOP_BG, PACE_STOP_FG
+    if state == "WARN":
+        return PACE_WARN_BG, PACE_WARN_FG
+    return PACE_OK_BG, PACE_OK_FG
+
+
+def pace_accent(state: str) -> str:
+    if state == "STOP":
+        return CRITICAL
+    if state == "WARN":
+        return WARN
+    return DOT_OK
 
 
 def _hex_to_rgb(color: str) -> tuple[int, int, int]:

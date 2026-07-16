@@ -11,7 +11,7 @@ from typing import Any
 from cursor_usage import PlanUsage
 
 DENSITY_OPTIONS = ("full", "compact", "minimal")
-METRIC_OPTIONS = ("total", "auto", "api", "worst")
+METRIC_OPTIONS = ("total", "auto", "api", "worst", "pace")
 
 
 @dataclass
@@ -22,7 +22,9 @@ class AppSettings:
     show_header: bool = True
     show_reset_countdown: bool = True
     show_stale_badge: bool = True
-    minimized_metric: str = "total"  # total | auto | api | worst
+    show_total: bool = True
+    show_pace: bool = True
+    minimized_metric: str = "pace"  # total | auto | api | worst | pace
     start_minimized: bool = False  # open hidden (pill) on launch
     start_with_windows: bool = False
 
@@ -84,6 +86,7 @@ def resolve_minimized_percent(usage: PlanUsage, metric: str) -> float:
         return usage.api_percent
     if metric == "worst":
         return max(usage.total_percent, usage.auto_percent, usage.api_percent)
+    # "pace" is rendered separately in the pill; fall back to total for ring %
     return usage.total_percent
 
 

@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import font as tkfont
 
 from cursor_auth import AuthError
-from cursor_usage import PlanUsage, UsageError, fetch_current_period_usage
+from cursor_usage import PlanUsage, UsageError, budget_from_plan, fetch_current_period_usage
+from pace_history import load_history, record_usage_point, reset_today_baseline, save_history
+from pacing import (
+    PaceResult,
+    WEEKDAY_NAMES,
+    compute_pace,
+    default_weights,
+    format_compact,
+    format_units,
+)
 from settings import (
     AppSettings,
     effective_click_through,
@@ -35,7 +44,10 @@ from theme import (
     STALE_FG,
     TEXT,
     USAGE_MARK,
+    WARN,
     bar_color_for_percent,
+    pace_accent,
+    pace_badge_colors,
 )
 from win_app_icon import apply_tk_icon, set_app_user_model_id
 from win_clickthrough import set_click_through, set_rounded_corners, toplevel_hwnd
@@ -46,6 +58,7 @@ POLL_MS = 3 * 60 * 1000
 STALE_MS = 2 * POLL_MS
 WINDOW_WIDTH = 300
 PILL_WIDTH = 118
+PILL_WIDTH_PACE = 168
 PILL_HEIGHT = 44
 CORNER_RADIUS = 18
 PILL_CORNER_RADIUS = 16
@@ -241,6 +254,8 @@ class UsageFloater(tk.Tk):
         self._connection_ok: bool | None = None
         self._last_success_at: datetime | None = None
         self._last_usage: PlanUsage | None = None
+        self._last_pace: PaceResult | None = None
+        self._pace_weights: list[float] = default_weights()
         self._minimized = bool(self.settings.start_minimized)
         self._force_expanded = False
         self._placed = False
@@ -330,7 +345,72 @@ class UsageFloater(tk.Tk):
         self.total_row.configure(bg=CARD)
         self.total_row.pack(fill="x", pady=(14, 0))
 
-        # Detail: spacing only — no nested gray card
+        # Daily pace / soft-stop (hero visual)
+        self.pace_panel = tk.Frame(self.expanded, bg=CARD)
+        self.pace_panel.pack(fill="x", pady=(12, 0))
+
+        pace_header = tk.Frame(self.pace_panel, bg=CARD)
+        pace_header.pack(fill="x")
+
+        # WARN/STOP chip only — hidden while OK
+        self.pace_badge = tk.Label(
+            pace_header,
+            text="",
+            bg=CARD,
+            fg=MUTED,
+            font=("Segoe UI Semibold", 9),
+            padx=8,
+            pady=2,
+        )
+
+        self.pace_reset_btn = tk.Button(
+            pace_header,
+            text="Reset today",
+            command=self._reset_pace_today,
+            bg=CARD,
+            fg=MUTED,
+            activebackground=HOVER,
+            activeforeground=TEXT,
+            relief="flat",
+            bd=0,
+            font=("Segoe UI", 8),
+            cursor="hand2",
+            padx=6,
+            pady=1,
+        )
+        self.pace_reset_btn.pack(side="right")
+        self.pace_reset_btn.bind("<Enter>", lambda _e: self.pace_reset_btn.configure(fg=TEXT))
+        self.pace_reset_btn.bind("<Leave>", lambda _e: self.pace_reset_btn.configure(fg=MUTED))
+
+        self.pace_row = ProgressRow(self.pace_panel, "Today's pace", hero=True)
+        self.pace_row.configure(bg=CARD)
+        self.pace_row.pack(fill="x", pady=(6, 0))
+
+        self.pace_msg = tk.Label(
+            self.pace_panel,
+            text="",
+            bg=CARD,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+            wraplength=WINDOW_WIDTH - 48,
+            justify="left",
+            anchor="w",
+        )
+        # Only packed on WARN/STOP
+
+        self.pace_meta = tk.Label(
+            self.pace_panel,
+            text="",
+            bg=CARD,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+            wraplength=WINDOW_WIDTH - 48,
+            justify="left",
+            anchor="w",
+        )
+        self.pace_meta.pack(fill="x", pady=(6, 0))
+
+        # Detail: Auto / API
         self.detail = tk.Frame(self.expanded, bg=CARD)
         self.detail.pack(fill="x", pady=(14, 0))
 
@@ -408,6 +488,16 @@ class UsageFloater(tk.Tk):
         )
         self.pill_pct.pack(side="left")
 
+        self.pill_state = tk.Label(
+            self.pill_inner,
+            text="",
+            bg=CARD,
+            fg=MUTED,
+            font=("Segoe UI", 7, "bold"),
+            padx=4,
+        )
+        # packed when pace metric is active
+
         self.pill_cue = tk.Label(
             self.pill_inner,
             text="",
@@ -423,6 +513,7 @@ class UsageFloater(tk.Tk):
             self.pill_pct,
             self.pill_canvas,
             self.pill_cue,
+            self.pill_state,
         ):
             w.bind("<ButtonPress-1>", self._start_drag)
             w.bind("<B1-Motion>", self._on_drag)
@@ -613,6 +704,7 @@ class UsageFloater(tk.Tk):
         for child in (
             self.header,
             self.total_row,
+            self.pace_panel,
             self.detail,
             self.reset_label,
             self.stale_badge,
@@ -626,20 +718,62 @@ class UsageFloater(tk.Tk):
         if self.settings.show_header:
             self.header.pack(fill="x")
 
-        self.total_row.pack(
-            fill="x",
-            pady=(14, 0) if self.settings.show_header else (0, 0),
-        )
+        first_section = True
+        if self.settings.show_total:
+            self.total_row.pack(
+                fill="x",
+                pady=(14 if self.settings.show_header or first_section else 0, 0),
+            )
+            first_section = False
+
+        if self.settings.show_pace:
+            self.pace_panel.pack(
+                fill="x",
+                pady=(12 if not first_section else (14 if self.settings.show_header else 0), 0),
+            )
+            first_section = False
 
         show_detail = self.settings.density == "full" or (
             self.settings.density == "minimal" and self._force_expanded
         )
         if show_detail:
-            self.detail.pack(fill="x", pady=(14, 0))
+            self.detail.pack(
+                fill="x",
+                pady=(14 if not first_section else (14 if self.settings.show_header else 0), 0),
+            )
 
         self.status_label.pack(fill="x", pady=(10, 0))
         self._update_reset_countdown()
         self._update_stale_badge()
+
+    def _update_section_visibility(self) -> None:
+        """Apply Total / Today's pace on-off without full chrome rebuild."""
+        if self._show_pill_mode():
+            return
+        if self.settings.show_total:
+            if not self.total_row.winfo_ismapped():
+                self.total_row.pack(fill="x", pady=(14, 0), after=self.header)
+        else:
+            self.total_row.pack_forget()
+        self._update_pace_visibility()
+
+    def _update_pace_visibility(self) -> None:
+        if not hasattr(self, "pace_panel"):
+            return
+        show = bool(self.settings.show_pace) and not self._show_pill_mode()
+        if show:
+            if not self.pace_panel.winfo_ismapped():
+                if self.total_row.winfo_ismapped():
+                    self.pace_panel.pack(fill="x", pady=(12, 0), after=self.total_row)
+                elif self.header.winfo_ismapped():
+                    self.pace_panel.pack(fill="x", pady=(14, 0), after=self.header)
+                else:
+                    self.pace_panel.pack(fill="x", pady=(0, 0))
+        else:
+            self.pace_panel.pack_forget()
+
+    def _pace_accent(self, state: str) -> str:
+        return pace_accent(state)
 
     def _paint_status(self) -> None:
         if self._refreshing:
@@ -679,13 +813,38 @@ class UsageFloater(tk.Tk):
 
     def _update_pill_percent(self) -> None:
         if self._last_usage is None:
-            self.pill_pct.configure(text="—%")
+            self.pill_pct.configure(text="—%", fg=TEXT)
             self.pill_canvas.itemconfigure(self._pill_arc, extent=0)
+            self.pill_state.pack_forget()
             return
+
+        if self.settings.minimized_metric == "pace" and self._last_pace is not None:
+            pace = self._last_pace
+            pct = min(150.0, pace.percent_of_fair * 100.0)
+            short = f"{format_units(pace.used_today)}%/{format_units(pace.fair_today)}%"
+            accent = self._pace_accent(pace.state) if pace.state != "OK" else TEXT
+            self.pill_pct.configure(text=short, fg=accent)
+            extent = -max(1.0, min(359.9, min(pct, 100.0) / 100.0 * 359.9))
+            ring = (
+                self._pace_accent(pace.state)
+                if pace.state != "OK"
+                else bar_color_for_percent(min(pct, 100.0))
+            )
+            self.pill_canvas.itemconfigure(self._pill_arc, extent=extent, outline=ring)
+            if pace.state == "OK":
+                self.pill_state.pack_forget()
+            else:
+                bg, fg = pace_badge_colors(pace.state)
+                self.pill_state.configure(text=pace.state, bg=bg, fg=fg)
+                if not self.pill_state.winfo_ismapped():
+                    self.pill_state.pack(side="left", padx=(6, 0))
+            return
+
+        self.pill_state.pack_forget()
         value = resolve_minimized_percent(
             self._last_usage, self.settings.minimized_metric
         )
-        self.pill_pct.configure(text=format_percent(value))
+        self.pill_pct.configure(text=format_percent(value), fg=TEXT)
         extent = -max(1.0, min(359.9, value / 100.0 * 359.9))
         color = bar_color_for_percent(value)
         self.pill_canvas.itemconfigure(self._pill_arc, extent=extent, outline=color)
@@ -748,7 +907,14 @@ class UsageFloater(tk.Tk):
 
     def _target_size(self) -> tuple[int, int]:
         self.update_idletasks()
-        width = PILL_WIDTH if self._show_pill_mode() else WINDOW_WIDTH
+        if self._show_pill_mode():
+            width = (
+                PILL_WIDTH_PACE
+                if self.settings.minimized_metric == "pace"
+                else PILL_WIDTH
+            )
+        else:
+            width = WINDOW_WIDTH
         height = max(self.winfo_reqheight(), 1)
         return width, height
 
@@ -919,6 +1085,7 @@ class UsageFloater(tk.Tk):
         )
         self.auto_row.set_percent(usage.auto_percent)
         self.api_row.set_percent(usage.api_percent)
+        self._update_pace_from_usage(usage)
         self._paint_status()
         self._update_pill_percent()
         if not self._show_pill_mode():
@@ -926,6 +1093,93 @@ class UsageFloater(tk.Tk):
             self.status_label.configure(text=f"Updated {stamp}")
             self._update_reset_countdown()
             self._update_stale_badge()
+            self._update_section_visibility()
+        self._resize_to_content()
+
+    def _update_pace_from_usage(self, usage: PlanUsage) -> None:
+        budget = budget_from_plan(usage)
+        history = load_history()
+        history, used_today, weights = record_usage_point(
+            history, used=budget.used, unit=budget.unit
+        )
+        save_history(history)
+        self._pace_weights = weights
+
+        cycle_end = datetime.now() + timedelta(days=14)
+        if usage.billing_cycle_end:
+            parsed = _parse_billing_end(usage.billing_cycle_end.strip())
+            if parsed is not None:
+                if parsed.tzinfo is not None:
+                    parsed = parsed.astimezone().replace(tzinfo=None)
+                cycle_end = parsed
+
+        pace = compute_pace(
+            remaining=budget.remaining,
+            billing_cycle_end=cycle_end,
+            now=datetime.now(),
+            weights=weights,
+            used_today=used_today,
+        )
+        self._last_pace = pace
+
+        # Pace bar fills by % of today's fair budget; label shows used%/fair
+        pace_pct = min(100.0, pace.percent_of_fair * 100.0)
+        self.pace_row.set_percent(pace_pct)
+        used_lbl = format_units(pace.used_today)
+        fair_lbl = format_units(pace.fair_today)
+        self.pace_row.pct_label.configure(
+            text=f"{used_lbl}%/{fair_lbl}%",
+            fg=self._pace_accent(pace.state) if pace.state != "OK" else TEXT,
+        )
+        self.pace_row.title_label.configure(text="Today's pace", fg=TEXT)
+
+        wd = WEEKDAY_NAMES[datetime.now().weekday()]
+        weight_pct = int(round(pace.today_weight * 100))
+        unit = "%" if budget.unit == "percent" else "¢"
+        if budget.remaining <= 0.01:
+            meta = "Cycle allowance used up"
+        else:
+            meta = (
+                f"{wd} weight {weight_pct}%"
+                f"  ·  {format_units(budget.remaining)}{unit} left in cycle"
+            )
+        self.pace_meta.configure(text=meta, fg=MUTED)
+
+        # Badge + warning only when near/over today's pace
+        if pace.state == "OK":
+            self.pace_badge.pack_forget()
+            self.pace_msg.pack_forget()
+        else:
+            bg, fg = pace_badge_colors(pace.state)
+            self.pace_badge.configure(text=pace.state, bg=bg, fg=fg)
+            if not self.pace_badge.winfo_ismapped():
+                self.pace_badge.pack(side="right", before=self.pace_reset_btn)
+            self.pace_msg.configure(text=pace.message, fg=self._pace_accent(pace.state))
+            if not self.pace_msg.winfo_ismapped():
+                self.pace_msg.pack(fill="x", pady=(4, 0), before=self.pace_meta)
+
+        # Soft border tint on soft-stop
+        if pace.state == "STOP":
+            self.outer.configure(bg=CRITICAL)
+        elif pace.state == "WARN":
+            self.outer.configure(bg=WARN)
+        else:
+            self.outer.configure(bg=BORDER)
+
+    def _reset_pace_today(self) -> None:
+        """Re-baseline local used-today counter (does not change Cursor usage)."""
+        if self._last_usage is None:
+            self.status_label.configure(text="No usage data yet — refresh first")
+            return
+        budget = budget_from_plan(self._last_usage)
+        history = load_history()
+        history = reset_today_baseline(history, used=budget.used, unit=budget.unit)
+        save_history(history)
+        self._update_pace_from_usage(self._last_usage)
+        self._update_pill_percent()
+        if not self._show_pill_mode():
+            self.status_label.configure(text="Pace reset — today's count starts at 0")
+            self._update_section_visibility()
         self._resize_to_content()
 
     def _apply_error(self, message: str) -> None:
