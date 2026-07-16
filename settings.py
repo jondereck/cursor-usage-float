@@ -65,7 +65,36 @@ def _normalize(data: dict[str, Any]) -> AppSettings:
         values["density"] = defaults.density
     if values["minimized_metric"] not in METRIC_OPTIONS:
         values["minimized_metric"] = defaults.minimized_metric
-    return AppSettings(**values)
+    settings = AppSettings(**values)
+    ensure_usage_section_visible(settings)
+    return settings
+
+
+def ensure_usage_section_visible(settings: AppSettings) -> AppSettings:
+    """Keep at least one of Total / Today's pace visible; align pill metric."""
+    if not settings.show_total and not settings.show_pace:
+        settings.show_total = True
+    if settings.minimized_metric == "pace" and not settings.show_pace:
+        settings.minimized_metric = "total"
+    elif (
+        settings.minimized_metric != "pace"
+        and not settings.show_total
+        and settings.show_pace
+    ):
+        settings.minimized_metric = "pace"
+    return settings
+
+
+def effective_pill_metric(settings: AppSettings) -> str:
+    """Pill metric respecting which usage sections are enabled."""
+    metric = settings.minimized_metric
+    if metric == "pace":
+        if settings.show_pace:
+            return "pace"
+        return "total"
+    if not settings.show_total and settings.show_pace:
+        return "pace"
+    return metric
 
 
 def _read_settings_file(settings_path: Path) -> AppSettings:

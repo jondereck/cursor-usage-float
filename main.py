@@ -28,6 +28,8 @@ from pacing import (
 from settings import (
     AppSettings,
     effective_click_through,
+    effective_pill_metric,
+    ensure_usage_section_visible,
     format_percent,
     load_settings,
     resolve_minimized_percent,
@@ -588,6 +590,7 @@ class UsageFloater(tk.Tk):
         self._apply_settings_side_effects()
 
     def _on_settings_changed(self, settings: AppSettings) -> None:
+        ensure_usage_section_visible(settings)
         self.settings = settings
         if settings.density != "minimal":
             self._force_expanded = False
@@ -832,7 +835,8 @@ class UsageFloater(tk.Tk):
             self.pill_state.pack_forget()
             return
 
-        if self.settings.minimized_metric == "pace" and self._last_pace is not None:
+        metric = effective_pill_metric(self.settings)
+        if metric == "pace" and self._last_pace is not None:
             pace = self._last_pace
             pct = min(150.0, pace.percent_of_fair * 100.0)
             short = f"{format_units(pace.used_today)}%/{format_units(pace.fair_today)}%"
@@ -855,9 +859,13 @@ class UsageFloater(tk.Tk):
             return
 
         self.pill_state.pack_forget()
-        value = resolve_minimized_percent(
-            self._last_usage, self.settings.minimized_metric
-        )
+        # Pace selected but not ready yet — show placeholder, not Total.
+        if metric == "pace":
+            self.pill_pct.configure(text="—%", fg=TEXT)
+            self.pill_canvas.itemconfigure(self._pill_arc, extent=0)
+            return
+
+        value = resolve_minimized_percent(self._last_usage, metric)
         self.pill_pct.configure(text=format_percent(value), fg=TEXT)
         extent = -max(1.0, min(359.9, value / 100.0 * 359.9))
         color = bar_color_for_percent(value)
@@ -924,7 +932,7 @@ class UsageFloater(tk.Tk):
         if self._show_pill_mode():
             width = (
                 PILL_WIDTH_PACE
-                if self.settings.minimized_metric == "pace"
+                if effective_pill_metric(self.settings) == "pace"
                 else PILL_WIDTH
             )
         else:

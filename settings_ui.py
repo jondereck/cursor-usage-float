@@ -12,6 +12,7 @@ from settings import (
     DENSITY_OPTIONS,
     METRIC_OPTIONS,
     AppSettings,
+    ensure_usage_section_visible,
     save_settings,
 )
 from theme import (
@@ -288,6 +289,14 @@ class SettingsWindow(tk.Toplevel):
                 return
             enabled = bool(var.get())
             setattr(self.settings, attr, enabled)
+            if attr in ("show_total", "show_pace"):
+                if not self.settings.show_total and not self.settings.show_pace:
+                    # Keep at least one usage section visible.
+                    var.set(True)
+                    setattr(self.settings, attr, True)
+                    return
+                ensure_usage_section_visible(self.settings)
+                self._metric_var.set(self.settings.minimized_metric)
             if attr == "start_with_windows":
                 set_start_with_windows(enabled)
             self._persist()
@@ -400,7 +409,18 @@ class SettingsWindow(tk.Toplevel):
 
     def _on_metric(self) -> None:
         self.settings.minimized_metric = self._metric_var.get()
+        if self.settings.minimized_metric == "pace":
+            self.settings.show_pace = True
+        else:
+            self.settings.show_total = True
+        ensure_usage_section_visible(self.settings)
+        self._metric_var.set(self.settings.minimized_metric)
+        self._sync_bool_vars()
         self._persist()
+
+    def _sync_bool_vars(self) -> None:
+        for attr, var in self._bool_vars.items():
+            var.set(bool(getattr(self.settings, attr)))
 
     def _persist(self) -> None:
         save_settings(self.settings)

@@ -116,6 +116,64 @@ def test_effective_click_through() -> None:
     assert effective_click_through(True, True) is False
 
 
+def test_ensure_usage_section_visible_forces_total() -> None:
+    from settings import ensure_usage_section_visible
+
+    s = AppSettings(show_total=False, show_pace=False)
+    ensure_usage_section_visible(s)
+    assert s.show_total is True
+    assert s.show_pace is False
+
+
+def test_ensure_usage_section_visible_keeps_one() -> None:
+    from settings import ensure_usage_section_visible
+
+    only_pace = AppSettings(show_total=False, show_pace=True, minimized_metric="total")
+    ensure_usage_section_visible(only_pace)
+    assert only_pace.show_pace is True
+    assert only_pace.minimized_metric == "pace"
+
+    only_total = AppSettings(show_total=True, show_pace=False, minimized_metric="pace")
+    ensure_usage_section_visible(only_total)
+    assert only_total.show_total is True
+    assert only_total.minimized_metric == "total"
+
+
+def test_load_repairs_both_sections_off(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"show_total": False, "show_pace": False}),
+        encoding="utf-8",
+    )
+    loaded = load_settings(path)
+    assert loaded.show_total is True
+
+
+def test_effective_pill_metric() -> None:
+    from settings import effective_pill_metric
+
+    assert (
+        effective_pill_metric(AppSettings(minimized_metric="pace", show_pace=True))
+        == "pace"
+    )
+    assert (
+        effective_pill_metric(
+            AppSettings(minimized_metric="pace", show_pace=False, show_total=True)
+        )
+        == "total"
+    )
+    assert (
+        effective_pill_metric(
+            AppSettings(minimized_metric="total", show_total=False, show_pace=True)
+        )
+        == "pace"
+    )
+    assert (
+        effective_pill_metric(AppSettings(minimized_metric="auto", show_total=True))
+        == "auto"
+    )
+
+
 def test_pace_sync_folder_default_empty(tmp_path: Path) -> None:
     path = tmp_path / "settings.json"
     save_settings(AppSettings(), path)
