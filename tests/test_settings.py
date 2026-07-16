@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from cursor_usage import PlanUsage
+from pace_history import default_history_path, resolve_pace_history_path
 from settings import (
     AppSettings,
     effective_click_through,
@@ -113,6 +114,121 @@ def test_effective_click_through() -> None:
     assert effective_click_through(False, True) is False
     assert effective_click_through(True, False) is True
     assert effective_click_through(True, True) is False
+
+
+def test_pace_sync_folder_default_empty(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    save_settings(AppSettings(), path)
+    loaded = load_settings(path)
+    assert loaded.pace_sync_folder == ""
+
+
+def test_pace_sync_folder_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    folder = str(tmp_path / "GDrive" / "cursor-usage-float")
+    original = AppSettings(pace_sync_folder=folder)
+    save_settings(original, path)
+    assert load_settings(path).pace_sync_folder == folder
+
+
+def test_resolve_pace_history_path_default() -> None:
+    assert resolve_pace_history_path("") == default_history_path()
+    assert resolve_pace_history_path("   ") == default_history_path()
+
+
+def test_resolve_pace_history_path_custom(tmp_path: Path) -> None:
+    folder = tmp_path / "sync"
+    resolved = resolve_pace_history_path(str(folder))
+    assert resolved == folder / "pace-history.json"
+
+
+def test_seed_history_copies_when_destination_missing(tmp_path: Path) -> None:
+    from pace_history import seed_history_if_needed
+
+    src = tmp_path / "local" / "pace-history.json"
+    dst = tmp_path / "drive" / "pace-history.json"
+    src.parent.mkdir(parents=True)
+    src.write_text('{"burns":[],"last_used":1,"unit":"percent","day_start":null}\n')
+    assert seed_history_if_needed(src, dst) is True
+    assert dst.read_text(encoding="utf-8") == src.read_text(encoding="utf-8")
+    assert seed_history_if_needed(src, dst) is False  # already exists
+
+
+def test_apply_pace_sync_folder_seeds(tmp_path: Path) -> None:
+    from pace_history import apply_pace_sync_folder, resolve_pace_history_path
+
+    local = resolve_pace_history_path("")
+    # Use tmp as "previous" by writing via apply from empty→folder after planting local
+    # Simulate: old folder empty (local default under tmp via monkeypatch-like path)
+    old_folder = str(tmp_path / "old")
+    new_folder = str(tmp_path / "new")
+    old_path = resolve_pace_history_path(old_folder)
+    old_path.parent.mkdir(parents=True)
+    old_path.write_text('{"burns":[],"last_used":2,"unit":"percent","day_start":null}\n')
+    result = apply_pace_sync_folder(old_folder, new_folder)
+    assert result == new_folder
+    assert resolve_pace_history_path(result).is_file()
+
+
+def test_resolve_sync_settings_path(tmp_path: Path) -> None:
+    from settings import resolve_sync_settings_path
+
+    assert resolve_sync_settings_path("") is None
+    assert resolve_sync_settings_path("  ") is None
+    assert resolve_sync_settings_path(str(tmp_path / "sync")) == tmp_path / "sync" / "settings.json"
+
+
+def test_save_load_merges_synced_settings(tmp_path: Path, monkeypatch) -> None:
+    from settings import load_settings, save_settings
+
+    local = tmp_path / "local" / "settings.json"
+    sync_dir = tmp_path / "gdrive"
+    monkeypatch.setattr("settings.default_settings_path", lambda: local)
+
+    # Local only knows the sync folder path for this PC
+    save_settings(AppSettings(pace_sync_folder=str(sync_dir), density="full"))
+    # Shared file has appearance prefs from the other PC (overwrite seeded copy)
+    shared = sync_dir / "settings.json"
+    shared.write_text(
+        json.dumps(
+            {
+                "density": "compact",
+                "click_through": True,
+                "pace_sync_folder": "C:\\\\OtherPC\\\\DifferentPath",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_settings()
+    assert loaded.density == "compact"
+    assert loaded.click_through is True
+    # Local machine path always wins
+    assert loaded.pace_sync_folder == str(sync_dir)
+
+
+def test_save_settings_writes_shared_copy(tmp_path: Path, monkeypatch) -> None:
+    from settings import load_settings, save_settings
+
+    local = tmp_path / "local" / "settings.json"
+    sync_dir = tmp_path / "gdrive"
+    monkeypatch.setattr("settings.default_settings_path", lambda: local)
+
+    save_settings(
+        AppSettings(pace_sync_folder=str(sync_dir), density="minimal", show_pace=False)
+    )
+    assert local.is_file()
+    shared = sync_dir / "settings.json"
+    assert shared.is_file()
+    shared_data = json.loads(shared.read_text(encoding="utf-8"))
+    assert shared_data["density"] == "minimal"
+    assert shared_data["show_pace"] is False
+
+    # Reload picks shared values with local folder path
+    loaded = load_settings()
+    assert loaded.density == "minimal"
+    assert loaded.show_pace is False
+    assert loaded.pace_sync_folder == str(sync_dir)
 
 
 def test_bar_color_thresholds() -> None:

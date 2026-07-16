@@ -19,6 +19,48 @@ def default_history_path() -> Path:
     return Path(appdata) / "cursor-usage-float" / "pace-history.json"
 
 
+def resolve_pace_history_path(sync_folder: str = "") -> Path:
+    """Return pace-history.json path; empty folder uses the local default."""
+    folder = (sync_folder or "").strip().strip('"')
+    if not folder:
+        return default_history_path()
+    return Path(folder).expanduser() / "pace-history.json"
+
+
+def seed_history_if_needed(source: Path, destination: Path) -> bool:
+    """Copy history to destination when missing. Returns True if copied."""
+    if destination.is_file() or not source.is_file() or source == destination:
+        return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(source.read_bytes())
+    return True
+
+
+def apply_pace_sync_folder(settings_folder: str, new_folder: str) -> str:
+    """
+    Normalize new sync folder and seed history + settings from the previous location.
+
+    Returns the normalized folder string (empty = local default).
+    """
+    from settings import (
+        default_settings_path,
+        resolve_sync_settings_path,
+        seed_settings_if_needed,
+    )
+
+    old_path = resolve_pace_history_path(settings_folder)
+    normalized = (new_folder or "").strip().strip('"')
+    new_path = resolve_pace_history_path(normalized)
+    seed_history_if_needed(old_path, new_path)
+
+    old_settings = resolve_sync_settings_path(settings_folder) or default_settings_path()
+    new_settings = resolve_sync_settings_path(normalized)
+    if new_settings is not None:
+        seed_settings_if_needed(old_settings, new_settings)
+
+    return normalized
+
+
 @dataclass
 class DayStart:
     day: date

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable
-from tkinter import ttk
-
 from pathlib import Path
+from tkinter import filedialog, ttk
 
+from pace_history import apply_pace_sync_folder
 from settings import (
     DENSITY_OPTIONS,
     METRIC_OPTIONS,
@@ -186,6 +186,9 @@ class SettingsWindow(tk.Toplevel):
         ):
             self._add_switch(behavior, label, attr)
 
+        sync = self._section(outer, "Sync")
+        self._add_pace_sync_row(sync)
+
         startup = self._section(outer, "Startup")
         for attr, label in (
             ("start_with_windows", "Start with Windows"),
@@ -291,6 +294,106 @@ class SettingsWindow(tk.Toplevel):
 
         ToggleSwitch(row, var, command=on_toggle).pack(side="right")
 
+    def _add_pace_sync_row(self, parent: tk.Misc) -> None:
+        tk.Label(
+            parent,
+            text="Sync folder (Google Drive / OneDrive)",
+            bg=CARD,
+            fg=TEXT,
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            parent,
+            text="Same folder on both PCs syncs Today's pace and settings. Leave empty for this PC only.",
+            bg=CARD,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+            anchor="w",
+            wraplength=280,
+            justify="left",
+        ).pack(fill="x", pady=(2, 6))
+
+        self._sync_path_var = tk.StringVar(
+            value=self._sync_display(self.settings.pace_sync_folder)
+        )
+        path_lbl = tk.Label(
+            parent,
+            textvariable=self._sync_path_var,
+            bg=CARD,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+            anchor="w",
+            wraplength=280,
+            justify="left",
+        )
+        path_lbl.pack(fill="x", pady=(0, 6))
+
+        btns = tk.Frame(parent, bg=CARD)
+        btns.pack(fill="x")
+
+        browse = tk.Button(
+            btns,
+            text="Browse…",
+            command=self._browse_pace_sync,
+            bg=CARD,
+            fg=TEXT,
+            activebackground=BORDER,
+            activeforeground=TEXT,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9),
+        )
+        browse.pack(side="left")
+
+        clear = tk.Button(
+            btns,
+            text="Use local",
+            command=self._clear_pace_sync,
+            bg=CARD,
+            fg=MUTED,
+            activebackground=BORDER,
+            activeforeground=TEXT,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9),
+        )
+        clear.pack(side="left", padx=(6, 0))
+
+    @staticmethod
+    def _sync_display(folder: str) -> str:
+        folder = (folder or "").strip()
+        return folder if folder else "Local (this PC only)"
+
+    def _set_pace_sync_folder(self, folder: str) -> None:
+        if self._updating:
+            return
+        self.settings.pace_sync_folder = apply_pace_sync_folder(
+            self.settings.pace_sync_folder, folder
+        )
+        self._sync_path_var.set(self._sync_display(self.settings.pace_sync_folder))
+        self._persist()
+
+    def _browse_pace_sync(self) -> None:
+        initial = self.settings.pace_sync_folder.strip() or None
+        chosen = filedialog.askdirectory(
+            parent=self,
+            title="Choose shared sync folder",
+            initialdir=initial,
+            mustexist=True,
+        )
+        if chosen:
+            self._set_pace_sync_folder(chosen)
+
+    def _clear_pace_sync(self) -> None:
+        self._set_pace_sync_folder("")
+
     def _on_density(self) -> None:
         self.settings.density = self._density_var.get()
         self._persist()
@@ -311,6 +414,8 @@ class SettingsWindow(tk.Toplevel):
             self._metric_var.set(settings.minimized_metric)
             for attr, var in self._bool_vars.items():
                 var.set(bool(getattr(settings, attr)))
+            if hasattr(self, "_sync_path_var"):
+                self._sync_path_var.set(self._sync_display(settings.pace_sync_folder))
         finally:
             self._updating = False
 

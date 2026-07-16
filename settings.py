@@ -27,6 +27,9 @@ class AppSettings:
     minimized_metric: str = "pace"  # total | auto | api | worst | pace
     start_minimized: bool = False  # open hidden (pill) on launch
     start_with_windows: bool = False
+    # Shared folder for pace-history.json + settings.json (e.g. Google Drive).
+    # Empty = local APPDATA only. Path itself stays machine-local (Drive letter may differ).
+    pace_sync_folder: str = ""
 
 
 def default_settings_path() -> Path:
@@ -34,6 +37,14 @@ def default_settings_path() -> Path:
     if not appdata:
         return Path.home() / ".cursor-usage-float" / "settings.json"
     return Path(appdata) / "cursor-usage-float" / "settings.json"
+
+
+def resolve_sync_settings_path(sync_folder: str) -> Path | None:
+    """Return shared settings.json under sync folder, or None if unset."""
+    folder = (sync_folder or "").strip().strip('"')
+    if not folder:
+        return None
+    return Path(folder).expanduser() / "settings.json"
 
 
 def _normalize(data: dict[str, Any]) -> AppSettings:
@@ -57,8 +68,7 @@ def _normalize(data: dict[str, Any]) -> AppSettings:
     return AppSettings(**values)
 
 
-def load_settings(path: Path | None = None) -> AppSettings:
-    settings_path = path or default_settings_path()
+def _read_settings_file(settings_path: Path) -> AppSettings:
     if not settings_path.is_file():
         return AppSettings()
     try:
@@ -70,13 +80,60 @@ def load_settings(path: Path | None = None) -> AppSettings:
     return _normalize(payload)
 
 
-def save_settings(settings: AppSettings, path: Path | None = None) -> None:
-    settings_path = path or default_settings_path()
+def _write_settings_file(settings_path: Path, settings: AppSettings) -> None:
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(
         json.dumps(asdict(settings), indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def load_settings(path: Path | None = None) -> AppSettings:
+    """
+    Load settings.
+
+    If ``path`` is given, read only that file (tests / explicit).
+    If omitted, read local APPDATA settings, then overlay shared sync copy
+    when ``pace_sync_folder`` is set. The local ``pace_sync_folder`` always wins
+    so each PC can point at its own Drive path.
+    """
+    if path is not None:
+        return _read_settings_file(path)
+
+    local = _read_settings_file(default_settings_path())
+    shared_path = resolve_sync_settings_path(local.pace_sync_folder)
+    if shared_path is None or not shared_path.is_file():
+        return local
+
+    synced = _read_settings_file(shared_path)
+    synced.pace_sync_folder = local.pace_sync_folder
+    return synced
+
+
+def save_settings(settings: AppSettings, path: Path | None = None) -> None:
+    """
+    Save settings.
+
+    If ``path`` is given, write only that file.
+    If omitted, write local APPDATA and also the shared sync copy when set.
+    """
+    if path is not None:
+        _write_settings_file(path, settings)
+        return
+
+    _write_settings_file(default_settings_path(), settings)
+    shared_path = resolve_sync_settings_path(settings.pace_sync_folder)
+    if shared_path is not None:
+        _write_settings_file(shared_path, settings)
+
+
+def seed_settings_if_needed(source: Path, destination: Path) -> bool:
+    """Copy settings to destination when missing. Returns True if copied."""
+    if destination.is_file() or not source.is_file() or source == destination:
+        return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(source.read_bytes())
+    return True
 
 
 def resolve_minimized_percent(usage: PlanUsage, metric: str) -> float:

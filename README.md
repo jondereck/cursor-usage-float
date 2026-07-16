@@ -37,6 +37,15 @@ Pace history (for weekday learning) is stored in:
 
 `%APPDATA%\cursor-usage-float\pace-history.json`
 
+To sync **Today's pace** and **settings** across PCs (work + home), open Settings → **Sync** → **Browse…** and pick the same Google Drive / OneDrive folder on both machines. Leave empty to keep data on this PC only.
+
+That folder will contain:
+
+- `pace-history.json` — daily burn / Today's pace baseline  
+- `settings.json` — appearance / behavior prefs  
+
+Each PC still stores its own Sync folder path locally (Drive paths can differ).
+
 ## Safety / privacy
 
 - Token is read from disk on each refresh and **never saved** by this app.
@@ -64,6 +73,7 @@ Progress bars shift color by urgency: calm under 70%, warn 70–90%, critical at
 |--------|---------|
 | **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, **Total** on/off, **Today's pace** on/off, reset countdown, stale badge |
 | **Behavior** | Always on top, click-through |
+| **Sync** | Shared folder for pace + settings (Google Drive / OneDrive) — empty = local only |
 | **Startup** | Start with Windows (HKCU `Run` key `CursorUsageFloat`), Open hidden (pill) |
 
 ## Dev tests

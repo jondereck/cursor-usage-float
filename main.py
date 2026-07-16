@@ -10,7 +10,13 @@ from tkinter import font as tkfont
 
 from cursor_auth import AuthError
 from cursor_usage import PlanUsage, UsageError, budget_from_plan, fetch_current_period_usage
-from pace_history import load_history, record_usage_point, reset_today_baseline, save_history
+from pace_history import (
+    load_history,
+    record_usage_point,
+    reset_today_baseline,
+    resolve_pace_history_path,
+    save_history,
+)
 from pacing import (
     PaceResult,
     WEEKDAY_NAMES,
@@ -25,6 +31,7 @@ from settings import (
     format_percent,
     load_settings,
     resolve_minimized_percent,
+    save_settings,
 )
 from settings_ui import SettingsWindow, open_settings
 from theme import (
@@ -246,6 +253,9 @@ class UsageFloater(tk.Tk):
         apply_tk_icon(self, APP_ICON)
 
         self.settings = load_settings()
+        # Ensure shared settings.json exists once Sync folder is configured.
+        if self.settings.pace_sync_folder.strip():
+            save_settings(self.settings)
         if self.settings.start_with_windows:
             set_start_with_windows(True)
         self._drag_x = 0
@@ -583,8 +593,12 @@ class UsageFloater(tk.Tk):
             self._force_expanded = False
         self._apply_settings_side_effects()
         self._apply_layout(animate=True)
+        if self._last_usage is not None:
+            self._update_pace_from_usage(self._last_usage)
         self._refresh_status_text()
         self._update_pill_percent()
+        self._update_section_visibility()
+        self._resize_to_content()
 
     def _apply_settings_side_effects(self) -> None:
         try:
@@ -1096,13 +1110,17 @@ class UsageFloater(tk.Tk):
             self._update_section_visibility()
         self._resize_to_content()
 
+    def _pace_history_path(self) -> Path:
+        return resolve_pace_history_path(self.settings.pace_sync_folder)
+
     def _update_pace_from_usage(self, usage: PlanUsage) -> None:
         budget = budget_from_plan(usage)
-        history = load_history()
+        path = self._pace_history_path()
+        history = load_history(path)
         history, used_today, weights = record_usage_point(
             history, used=budget.used, unit=budget.unit
         )
-        save_history(history)
+        save_history(history, path)
         self._pace_weights = weights
 
         cycle_end = datetime.now() + timedelta(days=14)
@@ -1172,9 +1190,10 @@ class UsageFloater(tk.Tk):
             self.status_label.configure(text="No usage data yet — refresh first")
             return
         budget = budget_from_plan(self._last_usage)
-        history = load_history()
+        path = self._pace_history_path()
+        history = load_history(path)
         history = reset_today_baseline(history, used=budget.used, unit=budget.unit)
-        save_history(history)
+        save_history(history, path)
         self._update_pace_from_usage(self._last_usage)
         self._update_pill_percent()
         if not self._show_pill_mode():
