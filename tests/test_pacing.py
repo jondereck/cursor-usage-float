@@ -38,8 +38,8 @@ def test_remaining_calendar_days() -> None:
     assert len(days) == 3
 
 
-def test_compute_pace_heavier_weekday() -> None:
-    # Mon…Sun
+def test_compute_pace_equal_split_for_two_remaining_days() -> None:
+    # Legacy weights do not affect the equal daily split.
     weights = [0.2, 0.2, 0.2, 0.2, 0.1, 0.05, 0.05]
     now = datetime(2026, 7, 15, 10, 0, 0)  # Wednesday = index 2
     end = datetime(2026, 7, 16, 10, 0, 0)  # Wed + Thu
@@ -56,9 +56,51 @@ def test_compute_pace_heavier_weekday() -> None:
     assert result.days_left == 2
 
 
+def test_compute_pace_splits_pool_equally_not_by_weekday_weight() -> None:
+    weights = [0.1, 0.1, 0.9, 0.1, 0.1, 0.1, 0.1]
+    now = datetime(2026, 7, 15, 10, 0, 0)  # Wednesday
+    end = datetime(2026, 7, 16, 10, 0, 0)  # Wednesday + Thursday
+
+    result = compute_pace(
+        remaining=80,
+        billing_cycle_end=end,
+        now=now,
+        weights=weights,
+        used_today=20,
+    )
+
+    assert result.fair_today == 50.0
+    assert result.today_weight == 0.5
+
+
+def test_compute_pace_keeps_today_budget_stable_as_usage_grows() -> None:
+    weights = [0.2, 0.2, 0.2, 0.2, 0.1, 0.05, 0.05]
+    now = datetime(2026, 7, 15, 10, 0, 0)  # Wednesday
+    end = datetime(2026, 7, 16, 10, 0, 0)  # Wednesday + Thursday
+
+    morning = compute_pace(
+        remaining=100,
+        billing_cycle_end=end,
+        now=now,
+        weights=weights,
+        used_today=0,
+    )
+    later = compute_pace(
+        remaining=80,
+        billing_cycle_end=end,
+        now=now,
+        weights=weights,
+        used_today=20,
+    )
+
+    assert morning.fair_today == 50.0
+    assert later.fair_today == morning.fair_today
+    assert later.percent_of_fair == 0.4
+
+
 def test_compute_pace_stop_message() -> None:
     now = datetime(2026, 7, 15, 10, 0, 0)
-    end = datetime(2026, 7, 15, 23, 0, 0)
+    end = datetime(2026, 7, 16, 23, 0, 0)
     result = compute_pace(
         remaining=40,
         billing_cycle_end=end,

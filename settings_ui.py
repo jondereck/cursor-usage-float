@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable
-from pathlib import Path
 from tkinter import filedialog, ttk
 
 from pace_history import apply_pace_sync_folder
+from paths import resource_path
 from settings import (
     DENSITY_OPTIONS,
     METRIC_OPTIONS,
@@ -27,7 +27,7 @@ from theme import (
 from win_app_icon import apply_tk_icon
 from win_startup import set_start_with_windows
 
-APP_ICON = Path(__file__).resolve().parent / "assets" / "app.ico"
+APP_ICON = resource_path("assets", "app.ico")
 
 DENSITY_LABELS = {
     "full": "Full",

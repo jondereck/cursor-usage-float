@@ -115,11 +115,15 @@ def compute_pace(
     used_today: float,
 ) -> PaceResult:
     days = remaining_calendar_days(now, billing_cycle_end)
-    weight_sum = sum_weights_for_days(days, weights)
-    today_weight = float(weights[now.weekday()])
     rem = max(0.0, float(remaining))
-    fair = rem * (today_weight / weight_sum) if weight_sum > 0 else rem
     used = max(0.0, float(used_today))
+    # Reconstruct the start-of-day pool so today's budget stays stable while
+    # live remaining falls. Unused allowance is redistributed on later days.
+    start_of_day_pool = rem + used
+    day_count = max(1, len(days))
+    today_weight = 1.0 / day_count
+    weight_sum = 1.0
+    fair = start_of_day_pool / day_count
     if fair > 0:
         pct = used / fair
     else:

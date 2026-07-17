@@ -5,7 +5,8 @@ Small **always-on-top** floating window for Windows that shows your Cursor plan 
 - **Total** %
 - **Auto + Composer** %
 - **API** %
-- **Today's pace / soft-stop** — weekday-aware daily budget so you stretch usage to the end of the billing cycle
+- **Today's pace / soft-stop** — equal daily budget that automatically
+  rebalances so usage lasts to the end of the billing cycle
 
 Portable personal-use tool. No installer. Data stays on your machine.
 
@@ -17,6 +18,15 @@ Portable personal-use tool. No installer. Data stays on your machine.
 
 First run creates a local `.venv` in this folder. You can copy the whole folder elsewhere.
 
+## Portable .exe (no Python needed)
+
+Build a single-file executable you can copy to any Windows PC:
+
+1. Double-click `build.bat` (needs Python 3.10+ once, on the build machine).
+2. Grab `dist\CursorUsageFloat.exe` — copy that one file to your work / home PC and double-click it. No Python or `.venv` required.
+
+Notes: first launch is a bit slower (the onefile bundle self-extracts), some antivirus tools may flag unsigned PyInstaller exes, and settings / pace data still live in `%APPDATA%` (or your Sync folder).
+
 ## How it works
 
 1. Reads your Cursor access token from the local SQLite DB:  
@@ -24,7 +34,9 @@ First run creates a local `.venv` in this folder. You can copy the whole folder 
 2. Calls Cursor’s HTTPS usage endpoint only:  
    `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`
 3. Draws the progress bars and refreshes about every **3 minutes** (↻ for manual refresh).
-4. Tracks daily burn locally and learns Mon–Sun weights (weekdays naturally get more budget if that’s when you use Cursor). Soft-stop states:
+4. Splits the start-of-day remaining allowance equally across the calendar
+   days through reset. Under-use carries forward and raises later daily
+   budgets; over-use lowers them. Soft-stop states:
    - **OK** — under 80% of today’s fair share
    - **WARN** — ≥ 80% (“slow down”)
    - **STOP** — ≥ 100% (“Stop for now — save allotment for later in the cycle”)
@@ -33,7 +45,7 @@ Settings are stored in:
 
 `%APPDATA%\cursor-usage-float\settings.json`
 
-Pace history (for weekday learning) is stored in:
+Pace history (for the daily baseline) is stored in:
 
 `%APPDATA%\cursor-usage-float\pace-history.json`
 

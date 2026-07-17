@@ -10,6 +10,7 @@ from tkinter import font as tkfont
 
 from cursor_auth import AuthError
 from cursor_usage import PlanUsage, UsageError, budget_from_plan, fetch_current_period_usage
+from paths import resource_path
 from pace_history import (
     load_history,
     record_usage_point,
@@ -19,9 +20,7 @@ from pace_history import (
 )
 from pacing import (
     PaceResult,
-    WEEKDAY_NAMES,
     compute_pace,
-    default_weights,
     format_compact,
     format_units,
 )
@@ -75,7 +74,7 @@ GEAR_ICON = "\uE713"
 FADE_OUT_MS = 90
 FADE_IN_MS = 110
 FADE_FRAME_MS = 12
-APP_ICON = Path(__file__).resolve().parent / "assets" / "app.ico"
+APP_ICON = resource_path("assets", "app.ico")
 
 
 def _rounded_rect_coords(
@@ -267,7 +266,6 @@ class UsageFloater(tk.Tk):
         self._last_success_at: datetime | None = None
         self._last_usage: PlanUsage | None = None
         self._last_pace: PaceResult | None = None
-        self._pace_weights: list[float] = default_weights()
         self._minimized = bool(self.settings.start_minimized)
         self._force_expanded = False
         self._placed = False
@@ -1125,11 +1123,10 @@ class UsageFloater(tk.Tk):
         budget = budget_from_plan(usage)
         path = self._pace_history_path()
         history = load_history(path)
-        history, used_today, weights = record_usage_point(
+        history, used_today, _weights = record_usage_point(
             history, used=budget.used, unit=budget.unit
         )
         save_history(history, path)
-        self._pace_weights = weights
 
         cycle_end = datetime.now() + timedelta(days=14)
         if usage.billing_cycle_end:
@@ -1143,7 +1140,7 @@ class UsageFloater(tk.Tk):
             remaining=budget.remaining,
             billing_cycle_end=cycle_end,
             now=datetime.now(),
-            weights=weights,
+            weights=_weights,
             used_today=used_today,
         )
         self._last_pace = pace
@@ -1159,14 +1156,12 @@ class UsageFloater(tk.Tk):
         )
         self.pace_row.title_label.configure(text="Today's pace", fg=TEXT)
 
-        wd = WEEKDAY_NAMES[datetime.now().weekday()]
-        weight_pct = int(round(pace.today_weight * 100))
         unit = "%" if budget.unit == "percent" else "¢"
         if budget.remaining <= 0.01:
             meta = "Cycle allowance used up"
         else:
             meta = (
-                f"{wd} weight {weight_pct}%"
+                f"{pace.days_left} days incl. today"
                 f"  ·  {format_units(budget.remaining)}{unit} left in cycle"
             )
         self.pace_meta.configure(text=meta, fg=MUTED)

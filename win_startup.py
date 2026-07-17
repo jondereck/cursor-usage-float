@@ -15,6 +15,10 @@ def _project_root() -> Path:
 
 def launch_command() -> str:
     """Absolute command used for the Run key (quoted paths)."""
+    # Frozen (portable .exe): autostart the executable itself.
+    if getattr(sys, "frozen", False):
+        return f'"{Path(sys.executable)}"'
+
     root = _project_root()
     main_py = root / "main.py"
     pythonw = root / ".venv" / "Scripts" / "pythonw.exe"
