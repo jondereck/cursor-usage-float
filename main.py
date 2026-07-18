@@ -12,10 +12,10 @@ from cursor_auth import AuthError
 from cursor_usage import PlanUsage, UsageError, budget_from_plan, fetch_current_period_usage
 from paths import resource_path
 from pace_history import (
+    active_pace_history_path,
     load_history,
     record_usage_point,
     reset_today_baseline,
-    resolve_pace_history_path,
     save_history,
 )
 from pacing import (
@@ -1117,7 +1117,7 @@ class UsageFloater(tk.Tk):
         self._resize_to_content()
 
     def _pace_history_path(self) -> Path:
-        return resolve_pace_history_path(self.settings.pace_sync_folder)
+        return active_pace_history_path(self.settings.pace_sync_folder)
 
     def _update_pace_from_usage(self, usage: PlanUsage) -> None:
         budget = budget_from_plan(usage)

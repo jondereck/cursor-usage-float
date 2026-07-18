@@ -153,7 +153,12 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
     _write_settings_file(default_settings_path(), settings)
     shared_path = resolve_sync_settings_path(settings.pace_sync_folder)
     if shared_path is not None:
-        _write_settings_file(shared_path, settings)
+        try:
+            _write_settings_file(shared_path, settings)
+        except OSError:
+            # Google Drive / OneDrive can be offline or expose a temporarily
+            # unavailable virtual path. Local settings must remain usable.
+            pass
 
 
 def seed_settings_if_needed(source: Path, destination: Path) -> bool:

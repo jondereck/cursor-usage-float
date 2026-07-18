@@ -27,6 +27,20 @@ def resolve_pace_history_path(sync_folder: str = "") -> Path:
     return Path(folder).expanduser() / "pace-history.json"
 
 
+def active_pace_history_path(sync_folder: str = "") -> Path:
+    """Use the shared history only while its folder is available."""
+    folder = (sync_folder or "").strip().strip('"')
+    if not folder:
+        return default_history_path()
+    shared = Path(folder).expanduser()
+    try:
+        if shared.is_dir():
+            return shared / "pace-history.json"
+    except OSError:
+        pass
+    return default_history_path()
+
+
 def seed_history_if_needed(source: Path, destination: Path) -> bool:
     """Copy history to destination when missing. Returns True if copied."""
     if destination.is_file() or not source.is_file() or source == destination:

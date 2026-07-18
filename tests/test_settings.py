@@ -200,6 +200,29 @@ def test_resolve_pace_history_path_custom(tmp_path: Path) -> None:
     assert resolved == folder / "pace-history.json"
 
 
+def test_active_pace_history_path_falls_back_when_sync_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from pace_history import active_pace_history_path
+
+    local = tmp_path / "local" / "pace-history.json"
+    unavailable = tmp_path / "missing-drive" / "sync"
+    monkeypatch.setattr("pace_history.default_history_path", lambda: local)
+
+    assert active_pace_history_path(str(unavailable)) == local
+
+
+def test_active_pace_history_path_uses_available_sync_folder(tmp_path: Path) -> None:
+    from pace_history import active_pace_history_path
+
+    sync_folder = tmp_path / "sync"
+    sync_folder.mkdir()
+
+    assert active_pace_history_path(str(sync_folder)) == (
+        sync_folder / "pace-history.json"
+    )
+
+
 def test_seed_history_copies_when_destination_missing(tmp_path: Path) -> None:
     from pace_history import seed_history_if_needed
 
@@ -287,6 +310,20 @@ def test_save_settings_writes_shared_copy(tmp_path: Path, monkeypatch) -> None:
     assert loaded.density == "minimal"
     assert loaded.show_pace is False
     assert loaded.pace_sync_folder == str(sync_dir)
+
+
+def test_save_settings_keeps_local_copy_when_sync_folder_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    local = tmp_path / "local" / "settings.json"
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr("settings.default_settings_path", lambda: local)
+
+    save_settings(AppSettings(pace_sync_folder=str(blocked), density="compact"))
+
+    assert local.is_file()
+    assert load_settings(local).density == "compact"
 
 
 def test_bar_color_thresholds() -> None:
