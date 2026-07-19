@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from cursor_usage import PlanUsage
+from sync_status import record_sync_error, record_sync_success
 
 DENSITY_OPTIONS = ("full", "compact", "minimal")
 METRIC_OPTIONS = ("total", "auto", "api", "worst", "pace")
@@ -155,10 +156,11 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
     if shared_path is not None:
         try:
             _write_settings_file(shared_path, settings)
-        except OSError:
+            record_sync_success()
+        except OSError as exc:
             # Google Drive / OneDrive can be offline or expose a temporarily
             # unavailable virtual path. Local settings must remain usable.
-            pass
+            record_sync_error(str(exc))
 
 
 def seed_settings_if_needed(source: Path, destination: Path) -> bool:

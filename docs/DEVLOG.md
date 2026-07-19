@@ -18,3 +18,11 @@
 
 ### Later / backlog
 - Consider code-signing the exe to reduce antivirus false positives.
+
+## 2026-07-19
+
+### Done
+- Added a Settings → Sync status indicator: green synced, yellow Drive
+  unavailable/local fallback, red write error, and gray local-only.
+- Shows the newest successful shared `settings.json` / `pace-history.json`
+  write time and refreshes every 10 seconds while Settings is open.

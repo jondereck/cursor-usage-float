@@ -85,7 +85,7 @@ Progress bars shift color by urgency: calm under 70%, warn 70–90%, critical at
 |--------|---------|
 | **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, **Total** on/off, **Today's pace** on/off, reset countdown, stale badge |
 | **Behavior** | Always on top, click-through |
-| **Sync** | Shared folder for pace + settings (Google Drive / OneDrive) — empty = local only |
+| **Sync** | Shared folder for pace + settings, colored backup state, and last successful shared-folder write time |
 | **Startup** | Start with Windows (HKCU `Run` key `CursorUsageFloat`), Open hidden (pill) |
 
 ## Dev tests

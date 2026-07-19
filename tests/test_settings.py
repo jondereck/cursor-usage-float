@@ -326,6 +326,36 @@ def test_save_settings_keeps_local_copy_when_sync_folder_unavailable(
     assert load_settings(local).density == "compact"
 
 
+def test_save_settings_reports_shared_write_error_and_recovery(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import settings as settings_module
+    from sync_status import inspect_sync_status, record_sync_success
+
+    local = tmp_path / "local" / "settings.json"
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    monkeypatch.setattr("settings.default_settings_path", lambda: local)
+    real_write = settings_module._write_settings_file
+
+    def fail_shared(path: Path, app_settings: AppSettings) -> None:
+        if path.parent == sync_dir:
+            raise PermissionError("Permission denied")
+        real_write(path, app_settings)
+
+    record_sync_success()
+    monkeypatch.setattr(settings_module, "_write_settings_file", fail_shared)
+    save_settings(AppSettings(pace_sync_folder=str(sync_dir)))
+
+    failed = inspect_sync_status(str(sync_dir))
+    assert failed.state == "error"
+    assert "permission denied" in failed.detail.lower()
+
+    monkeypatch.setattr(settings_module, "_write_settings_file", real_write)
+    save_settings(AppSettings(pace_sync_folder=str(sync_dir)))
+    assert inspect_sync_status(str(sync_dir)).state == "synced"
+
+
 def test_bar_color_thresholds() -> None:
     from theme import BAR_FG, CRITICAL, WARN, bar_color_for_percent
 

@@ -15,14 +15,19 @@ from settings import (
     ensure_usage_section_visible,
     save_settings,
 )
+from sync_status import format_last_backup, inspect_sync_status
 from theme import (
     BG,
     BORDER,
     CARD,
+    DOT_ERR,
+    DOT_OK,
+    DOT_UNKNOWN,
     MUTED,
     SWITCH_OFF,
     SWITCH_ON,
     TEXT,
+    WARN,
 )
 from win_app_icon import apply_tk_icon
 from win_startup import set_start_with_windows
@@ -122,6 +127,7 @@ class SettingsWindow(tk.Toplevel):
         self._on_change = on_change
         self._on_visibility = on_visibility
         self._updating = False
+        self._sync_refresh_job: str | None = None
 
         self.transient(parent)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -338,6 +344,28 @@ class SettingsWindow(tk.Toplevel):
         )
         path_lbl.pack(fill="x", pady=(0, 6))
 
+        self._sync_status_label = tk.Label(
+            parent,
+            text="",
+            bg=CARD,
+            fg=DOT_UNKNOWN,
+            font=("Segoe UI Semibold", 9),
+            anchor="w",
+            wraplength=280,
+            justify="left",
+        )
+        self._sync_status_label.pack(fill="x", pady=(2, 0))
+
+        self._sync_backup_label = tk.Label(
+            parent,
+            text="Last backup: —",
+            bg=CARD,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+            anchor="w",
+        )
+        self._sync_backup_label.pack(fill="x", pady=(2, 8))
+
         btns = tk.Frame(parent, bg=CARD)
         btns.pack(fill="x")
 
@@ -374,6 +402,7 @@ class SettingsWindow(tk.Toplevel):
             font=("Segoe UI", 9),
         )
         clear.pack(side="left", padx=(6, 0))
+        self._refresh_sync_status()
 
     @staticmethod
     def _sync_display(folder: str) -> str:
@@ -388,6 +417,39 @@ class SettingsWindow(tk.Toplevel):
         )
         self._sync_path_var.set(self._sync_display(self.settings.pace_sync_folder))
         self._persist()
+        self._refresh_sync_status()
+
+    def _refresh_sync_status(self) -> None:
+        if self._sync_refresh_job is not None:
+            try:
+                self.after_cancel(self._sync_refresh_job)
+            except tk.TclError:
+                pass
+            self._sync_refresh_job = None
+
+        status = inspect_sync_status(self.settings.pace_sync_folder)
+        colors = {
+            "local": DOT_UNKNOWN,
+            "synced": DOT_OK,
+            "unavailable": WARN,
+            "error": DOT_ERR,
+        }
+        text = f"●  {status.label}"
+        if status.state == "error" and status.detail:
+            text = f"{text} — {status.detail}"
+        self._sync_status_label.configure(
+            text=text,
+            fg=colors[status.state],
+        )
+        self._sync_backup_label.configure(
+            text=format_last_backup(status.last_backup)
+        )
+        try:
+            self._sync_refresh_job = self.after(
+                10_000, self._refresh_sync_status
+            )
+        except tk.TclError:
+            self._sync_refresh_job = None
 
     def _browse_pace_sync(self) -> None:
         initial = self.settings.pace_sync_folder.strip() or None
@@ -438,8 +500,16 @@ class SettingsWindow(tk.Toplevel):
                 self._sync_path_var.set(self._sync_display(settings.pace_sync_folder))
         finally:
             self._updating = False
+        if hasattr(self, "_sync_status_label"):
+            self._refresh_sync_status()
 
     def _on_close(self) -> None:
+        if self._sync_refresh_job is not None:
+            try:
+                self.after_cancel(self._sync_refresh_job)
+            except tk.TclError:
+                pass
+            self._sync_refresh_job = None
         self.destroy()
 
 
