@@ -10,6 +10,16 @@ Small **always-on-top** floating window for Windows that shows your Cursor plan 
 
 Portable personal-use tool. No installer. Data stays on your machine.
 
+## Preview
+
+**Pill**
+
+![Cursor Usage Float pill](docs/images/pill.png)
+
+**Expanded**
+
+![Cursor Usage Float expanded](docs/images/expanded.png)
+
 ## Run
 
 1. Sign in to Cursor (desktop app).
