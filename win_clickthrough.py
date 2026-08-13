@@ -44,6 +44,55 @@ def toplevel_hwnd(widget: object) -> int:
         return 0
 
 
+def get_window_pos(hwnd: int) -> tuple[int, int] | None:
+    """Screen position via GetWindowRect (virtual-desktop aware)."""
+    if sys.platform != "win32" or not hwnd:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", wintypes.LONG),
+                ("top", wintypes.LONG),
+                ("right", wintypes.LONG),
+                ("bottom", wintypes.LONG),
+            ]
+
+        rect = RECT()
+        if not ctypes.windll.user32.GetWindowRect(int(hwnd), ctypes.byref(rect)):
+            return None
+        return int(rect.left), int(rect.top)
+    except Exception:
+        return None
+
+
+def set_window_pos(hwnd: int, x: int, y: int) -> bool:
+    """Move window with SetWindowPos (works across monitors; keeps size/z-order)."""
+    if sys.platform != "win32" or not hwnd:
+        return False
+    try:
+        import ctypes
+
+        SWP_NOSIZE = 0x0001
+        SWP_NOZORDER = 0x0004
+        SWP_NOACTIVATE = 0x0010
+        return bool(
+            ctypes.windll.user32.SetWindowPos(
+                int(hwnd),
+                0,
+                int(x),
+                int(y),
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+        )
+    except Exception:
+        return False
+
+
 def set_rounded_corners(hwnd: int, width: int, height: int, radius: int = 16) -> None:
     """Clip the top-level window to a rounded rectangle. No-op off Windows.
 

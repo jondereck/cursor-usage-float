@@ -16,6 +16,10 @@
   **Settings**, **Extras** (Enable at Startup / Start Minimized), **Quit**.
 - Tray click crash fixed: Win32 `WndProc` must not call Tk (`after`); clicks
   are queued and drained on the Tk poll (left/right no longer hard-exit).
+- Remembers last floater **position + pill/expanded** in local
+  `%APPDATA%\cursor-usage-float\window-state.json` (not Drive-synced).
+  Multi-monitor: save/restore via Win32 GetWindowRect/SetWindowPos (Tk
+  `winfo_x`/`geometry` was snapping 2nd-monitor positions back to primary).
 
 ## 2026-07-16
 

@@ -61,11 +61,24 @@ from theme import (
     pill_chrome,
 )
 from win_app_icon import apply_tk_icon, set_app_user_model_id
-from win_clickthrough import set_click_through, set_rounded_corners, toplevel_hwnd
+from win_clickthrough import (
+    get_window_pos,
+    set_click_through,
+    set_rounded_corners,
+    set_window_pos,
+    toplevel_hwnd,
+)
 from win_taskbar import apply_taskbar_button
 from win_tray import TrayIcon
 from win_hotkey import GlobalHotkey
 from win_startup import set_start_with_windows
+from window_state import (
+    WindowState,
+    clamp_position,
+    load_window_state,
+    save_window_state,
+    virtual_screen_bounds,
+)
 
 POLL_MS = 3 * 60 * 1000
 STALE_MS = 2 * POLL_MS
@@ -271,8 +284,16 @@ class UsageFloater(tk.Tk):
         self._last_success_at: datetime | None = None
         self._last_usage: PlanUsage | None = None
         self._last_pace: PaceResult | None = None
-        self._minimized = bool(self.settings.start_minimized)
-        self._force_expanded = False
+        self._window_state = load_window_state()
+        if self._window_state is not None:
+            self._minimized = bool(self._window_state.minimized)
+            # Minimal density is always pill unless force-expanded.
+            self._force_expanded = (
+                not self._window_state.minimized and self.settings.density == "minimal"
+            )
+        else:
+            self._minimized = bool(self.settings.start_minimized)
+            self._force_expanded = False
         self._placed = False
         self._animating = False
         self._anim_job: str | None = None
@@ -280,6 +301,8 @@ class UsageFloater(tk.Tk):
         self._pulse_on = False
         self._header_buttons: list[tk.Button] = []
         self._was_pill = bool(self._minimized or self.settings.density == "minimal")
+        if self._force_expanded:
+            self._was_pill = False
         self._settings_open = False
         self._settings_win: SettingsWindow | None = None
         self._click_through_hotkey: GlobalHotkey | None = None
@@ -302,7 +325,10 @@ class UsageFloater(tk.Tk):
         )
         self._apply_settings_side_effects()
         self._apply_layout(animate=False)
-        self._place_top_right()
+        self._restore_or_place_default()
+        # Re-apply after Tk finishes mapping — first geometry can snap to primary.
+        self.after(150, self._restore_or_place_default)
+        self.after(400, self._restore_or_place_default)
         self._register_click_through_hotkey()
         # Tray only — never a taskbar button for this borderless floater.
         self.after(100, self._hide_from_taskbar)
@@ -326,6 +352,7 @@ class UsageFloater(tk.Tk):
         self.header.pack(fill="x")
         self.header.bind("<ButtonPress-1>", self._start_drag)
         self.header.bind("<B1-Motion>", self._on_drag)
+        self.header.bind("<ButtonRelease-1>", self._end_drag)
 
         status_wrap = tk.Frame(self.header, bg=CARD)
         status_wrap.pack(side="left", padx=(0, 6))
@@ -364,6 +391,7 @@ class UsageFloater(tk.Tk):
         title.pack(side="left")
         title.bind("<ButtonPress-1>", self._start_drag)
         title.bind("<B1-Motion>", self._on_drag)
+        title.bind("<ButtonRelease-1>", self._end_drag)
 
         self.refresh_btn = self._header_btn("↻", self.refresh_async)
         self._header_btn("✕", self.destroy).pack(side="right")
@@ -550,7 +578,7 @@ class UsageFloater(tk.Tk):
             w.bind("<ButtonPress-1>", self._start_drag)
             w.bind("<B1-Motion>", self._on_drag)
             w.bind("<Double-Button-1>", lambda _e: self._expand_from_pill())
-            w.bind("<ButtonRelease-1>", self._pill_click)
+            w.bind("<ButtonRelease-1>", self._end_drag)
 
         self._pill_press_xy: tuple[int, int] | None = None
 
@@ -558,6 +586,7 @@ class UsageFloater(tk.Tk):
             if isinstance(child, tk.Label):
                 child.bind("<ButtonPress-1>", self._start_drag)
                 child.bind("<B1-Motion>", self._on_drag)
+                child.bind("<ButtonRelease-1>", self._end_drag)
 
         self.card.bind("<Button-3>", lambda _e: self._open_settings())
         self.pill.bind("<Button-3>", lambda _e: self._open_settings())
@@ -644,6 +673,7 @@ class UsageFloater(tk.Tk):
         self._open_settings()
 
     def destroy(self) -> None:
+        self._persist_window_state()
         if self._click_through_hotkey is not None:
             self._click_through_hotkey.unregister()
             self._click_through_hotkey = None
@@ -690,6 +720,7 @@ class UsageFloater(tk.Tk):
             self._force_expanded = False
             self._minimized = not self._minimized
         self._apply_layout(animate=True)
+        self._persist_window_state()
 
     def _collapse_to_pill(self) -> None:
         if self._animating or self._show_pill_mode():
@@ -697,6 +728,7 @@ class UsageFloater(tk.Tk):
         self._force_expanded = False
         self._minimized = True
         self._apply_layout(animate=True)
+        self._persist_window_state()
 
     def _expand_from_pill(self) -> None:
         if self._animating or not self._show_pill_mode():
@@ -705,6 +737,7 @@ class UsageFloater(tk.Tk):
         if self.settings.density == "minimal":
             self._force_expanded = True
         self._apply_layout(animate=True)
+        self._persist_window_state()
 
     def _pill_click(self, event: tk.Event) -> None:
         if self._pill_press_xy is None:
@@ -737,8 +770,13 @@ class UsageFloater(tk.Tk):
 
         # Alpha crossfade beats size-morph on Windows (no SetWindowRgn stutter).
         start_w = max(self.winfo_width(), 1)
-        x_right = self.winfo_x() + start_w
-        y = self.winfo_y()
+        pos = get_window_pos(toplevel_hwnd(self))
+        if pos is not None:
+            x_right = pos[0] + start_w
+            y = pos[1]
+        else:
+            x_right = self.winfo_x() + start_w
+            y = self.winfo_y()
         self._was_pill = want_pill
         self._animating = True
 
@@ -746,7 +784,10 @@ class UsageFloater(tk.Tk):
             self._set_chrome(want_pill)
             self.update_idletasks()
             end_w, end_h = self._target_size()
-            self.geometry(f"{end_w}x{end_h}+{x_right - end_w}+{y}")
+            self.geometry(f"{end_w}x{end_h}")
+            hwnd = toplevel_hwnd(self)
+            if not set_window_pos(hwnd, x_right - end_w, y):
+                self.geometry(f"{end_w}x{end_h}+{x_right - end_w}+{y}")
             self._apply_rounded_corners(end_w, end_h)
             self._paint_status()
             self._update_pill_percent()
@@ -1005,15 +1046,77 @@ class UsageFloater(tk.Tk):
         self._placed = True
         self._apply_rounded_corners(width, height)
 
+    def _restore_or_place_default(self) -> None:
+        """Restore last position/mode, or top-right on first run."""
+        state = self._window_state
+        if state is None:
+            self._place_top_right()
+            return
+        width, height = self._target_size()
+        ox, oy, vw, vh = virtual_screen_bounds(
+            self.winfo_screenwidth(), self.winfo_screenheight()
+        )
+        x, y = clamp_position(
+            state.x,
+            state.y,
+            width=width,
+            height=height,
+            screen_w=vw,
+            screen_h=vh,
+            origin_x=ox,
+            origin_y=oy,
+        )
+        # Size via Tk, position via Win32 (Tk winfo/geometry mishandles 2nd monitor).
+        self.geometry(f"{width}x{height}")
+        hwnd = toplevel_hwnd(self)
+        if not set_window_pos(hwnd, x, y):
+            self.geometry(f"{width}x{height}+{x}+{y}")
+        self._placed = True
+        self._apply_rounded_corners(width, height)
+
+    def _persist_window_state(self) -> None:
+        try:
+            self.update_idletasks()
+            width = max(self.winfo_width(), 1)
+            height = max(self.winfo_height(), 1)
+            hwnd = toplevel_hwnd(self)
+            pos = get_window_pos(hwnd)
+            if pos is None:
+                pos = (int(self.winfo_x()), int(self.winfo_y()))
+            ox, oy, vw, vh = virtual_screen_bounds(
+                self.winfo_screenwidth(), self.winfo_screenheight()
+            )
+            x, y = clamp_position(
+                pos[0],
+                pos[1],
+                width=width,
+                height=height,
+                screen_w=vw,
+                screen_h=vh,
+                origin_x=ox,
+                origin_y=oy,
+            )
+            state = WindowState(x=x, y=y, minimized=bool(self._show_pill_mode()))
+            save_window_state(state)
+            self._window_state = state
+        except Exception:
+            pass
+
     def _resize_to_content(self, *, pin_right: bool = False) -> None:
         width, height = self._target_size()
+        hwnd = toplevel_hwnd(self)
+        pos = get_window_pos(hwnd)
+        cur_x = pos[0] if pos is not None else int(self.winfo_x())
+        cur_y = pos[1] if pos is not None else int(self.winfo_y())
+        cur_w = max(self.winfo_width(), 1)
         if pin_right:
-            x = self.winfo_x() + max(self.winfo_width(), 1) - width
-            y = self.winfo_y()
+            x = cur_x + cur_w - width
+            y = cur_y
         else:
-            x = self.winfo_x()
-            y = self.winfo_y()
-        self.geometry(f"{width}x{height}+{x}+{y}")
+            x, y = cur_x, cur_y
+        self.geometry(f"{width}x{height}")
+        if not set_window_pos(hwnd, x, y):
+            self.geometry(f"{width}x{height}+{x}+{y}")
         self._apply_rounded_corners(width, height)
 
     def _set_alpha(self, value: float) -> None:
@@ -1081,14 +1184,27 @@ class UsageFloater(tk.Tk):
             )
 
     def _start_drag(self, event: tk.Event) -> None:
-        self._drag_x = event.x_root - self.winfo_x()
-        self._drag_y = event.y_root - self.winfo_y()
+        pos = get_window_pos(toplevel_hwnd(self))
+        if pos is not None:
+            self._drag_x = event.x_root - pos[0]
+            self._drag_y = event.y_root - pos[1]
+        else:
+            self._drag_x = event.x_root - self.winfo_x()
+            self._drag_y = event.y_root - self.winfo_y()
         self._pill_press_xy = (event.x_root, event.y_root)
 
     def _on_drag(self, event: tk.Event) -> None:
         x = event.x_root - self._drag_x
         y = event.y_root - self._drag_y
-        self.geometry(f"+{x}+{y}")
+        hwnd = toplevel_hwnd(self)
+        if not set_window_pos(hwnd, x, y):
+            self.geometry(f"+{x}+{y}")
+
+    def _end_drag(self, event: tk.Event) -> None:
+        self._persist_window_state()
+        # Pill single-click-to-expand still uses the same release.
+        if self._show_pill_mode():
+            self._pill_click(event)
 
     def _schedule_poll(self) -> None:
         self.refresh_async()
