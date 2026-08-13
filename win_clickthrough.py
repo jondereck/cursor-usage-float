@@ -93,6 +93,50 @@ def set_window_pos(hwnd: int, x: int, y: int) -> bool:
         return False
 
 
+TRANSPARENT_KEY = (255, 0, 255)  # magenta — never used in pill chrome
+
+
+def clear_window_region(hwnd: int) -> None:
+    """Remove SetWindowRgn clip (needed for color-key shaped pills)."""
+    if sys.platform != "win32" or not hwnd:
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.SetWindowRgn(int(hwnd), None, True)
+    except Exception:
+        return
+
+
+def set_color_key(hwnd: int, rgb: tuple[int, int, int] | None) -> None:
+    """Enable/disable LWA_COLORKEY. ``rgb=None`` restores opaque layered alpha."""
+    if sys.platform != "win32" or not hwnd:
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        GWL_EXSTYLE = -20
+        WS_EX_LAYERED = 0x00080000
+        LWA_COLORKEY = 0x00000001
+        LWA_ALPHA = 0x00000002
+
+        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        if not (style & WS_EX_LAYERED):
+            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
+
+        if rgb is None:
+            user32.SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
+            return
+
+        r, g, b = (int(rgb[0]) & 255, int(rgb[1]) & 255, int(rgb[2]) & 255)
+        # COLORREF is 0x00bbggrr
+        colorref = r | (g << 8) | (b << 16)
+        user32.SetLayeredWindowAttributes(hwnd, colorref, 0, LWA_COLORKEY)
+    except Exception:
+        return
+
+
 def set_rounded_corners(hwnd: int, width: int, height: int, radius: int = 16) -> None:
     """Clip the top-level window to a rounded rectangle. No-op off Windows.
 
@@ -100,6 +144,7 @@ def set_rounded_corners(hwnd: int, width: int, height: int, radius: int = 16) ->
     For a full capsule, pass ``height`` so each end is a semicircle.
 
     Enables WS_EX_LAYERED so DWM soft-composites the clip (less jagged edges).
+    Clears any prior color-key so expanded mode stays fully opaque.
     """
     if sys.platform != "win32" or not hwnd or width <= 0 or height <= 0:
         return
@@ -116,8 +161,8 @@ def set_rounded_corners(hwnd: int, width: int, height: int, radius: int = 16) ->
         style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         if not (style & WS_EX_LAYERED):
             user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
-            # Fully opaque — layered mode mainly for smoother edge compositing.
-            user32.SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
+        # Opaque alpha — also clears LWA_COLORKEY from pill mode.
+        user32.SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
 
         # Capsule: ellipse diameter == height. +1 exclusive bottom/right.
         ellipse = max(1, int(radius))

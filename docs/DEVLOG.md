@@ -20,6 +20,9 @@
   `%APPDATA%\cursor-usage-float\window-state.json` (not Drive-synced).
   Multi-monitor: save/restore via Win32 GetWindowRect/SetWindowPos (Tk
   `winfo_x`/`geometry` was snapping 2nd-monitor positions back to primary).
+- WARN/STOP pill border: continuous capsule (no cut-off bottom). Cause was
+  `card` `pady=2` clipping the canvas plus Tk oval fill clipped at
+  `y2 == height`; fixed with zero pill padding + 1px draw inset + color-key.
 
 ## 2026-07-16
 

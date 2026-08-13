@@ -48,6 +48,8 @@ from theme import (
     HOVER,
     MARKER_80,
     MUTED,
+    PACE_WARN_BG,
+    PACE_WARN_FG,
     STALE_BG,
     STALE_FG,
     TEXT,
@@ -62,8 +64,11 @@ from theme import (
 )
 from win_app_icon import apply_tk_icon, set_app_user_model_id
 from win_clickthrough import (
+    TRANSPARENT_KEY,
+    clear_window_region,
     get_window_pos,
     set_click_through,
+    set_color_key,
     set_rounded_corners,
     set_window_pos,
     toplevel_hwnd,
@@ -85,7 +90,14 @@ STALE_MS = 2 * POLL_MS
 WINDOW_WIDTH = 300
 PILL_WIDTH = 110
 PILL_WIDTH_PACE = 168
-PILL_HEIGHT = 40
+PILL_HEIGHT = 36
+PILL_PAD_L = 8
+PILL_PAD_R = 10
+PILL_GAP = 6
+PILL_RING = 20
+PILL_BORDER_PX = 2
+PILL_NUM_FONT = ("Segoe UI", 11, "bold")
+PILL_BADGE_FONT = ("Segoe UI", 8, "bold")
 CORNER_RADIUS = 18
 PILL_CORNER_RADIUS = 22  # unused in pill mode; radius = height
 GEAR_ICON = "\uE713"
@@ -512,75 +524,56 @@ class UsageFloater(tk.Tk):
         )
         self.status_label.pack(fill="x", pady=(10, 0))
 
-        # --- Pill: ring | 2.8%/3.0% | optional WARN/STOP (tight capsule) ---
+        # --- Pill: single Canvas face (exact CSS capsule; widgets can't cover the ring) ---
         self.pill = tk.Frame(self.card, bg=CARD)
-        self.pill_inner = tk.Frame(self.pill, bg=CARD)
-        self.pill_inner.pack(padx=8, pady=6)
-
-        self.pill_canvas = tk.Canvas(
-            self.pill_inner,
-            width=26,
-            height=26,
+        self.pill_face = tk.Canvas(
+            self.pill,
+            width=120,
+            height=PILL_HEIGHT,
             bg=CARD,
             highlightthickness=0,
             bd=0,
+            cursor="hand2",
         )
-        self.pill_canvas.pack(side="left", padx=(0, 6))
-        self._pill_arc_bg = self.pill_canvas.create_arc(
-            2, 2, 24, 24, start=90, extent=-359.9, style="arc",
-            outline=BAR_BG, width=3,
-        )
-        self._pill_arc = self.pill_canvas.create_arc(
-            2, 2, 24, 24, start=90, extent=0, style="arc",
-            outline=bar_color_for_percent(0), width=3,
-        )
-        self._pill_dot_item = self.pill_canvas.create_oval(
-            9, 9, 17, 17, fill=DOT_UNKNOWN, outline=""
-        )
-
-        self.pill_pct = tk.Label(
-            self.pill_inner,
-            text="—%",
-            bg=CARD,
-            fg=TEXT,
-            font=("Segoe UI", 11, "bold"),
-        )
-        self.pill_pct.pack(side="left")
-
-        self.pill_state = tk.Label(
-            self.pill_inner,
-            text="",
-            bg=CARD,
-            fg=MUTED,
-            font=("Segoe UI", 8, "bold"),
-            padx=6,
-            pady=1,
-        )
-        # packed when pace is WARN/STOP
-
-        self.pill_cue = tk.Label(
-            self.pill_inner,
-            text="",
-            bg=CARD,
-            fg=DOT_ERR,
-            font=("Segoe UI", 7, "bold"),
-        )
-        # shown only on error
-
-        for w in (
-            self.pill,
-            self.pill_inner,
-            self.pill_pct,
-            self.pill_canvas,
-            self.pill_cue,
-            self.pill_state,
-        ):
-            w.bind("<ButtonPress-1>", self._start_drag)
-            w.bind("<B1-Motion>", self._on_drag)
-            w.bind("<Double-Button-1>", lambda _e: self._expand_from_pill())
-            w.bind("<ButtonRelease-1>", self._end_drag)
+        # Exact pixel size only — fill/expand left a magenta (transparent) strip
+        # under the capsule so the bottom border looked cut off.
+        self.pill_face.pack()
+        self.pill.pack_propagate(True)
+        self._pill_border_color = CARD
+        self._pill_view: dict[str, object] = {
+            "text": "—%",
+            "number_color": TEXT,
+            "ring_color": BAR_BG,
+            "ring_extent": 0.0,
+            "dot_color": DOT_UNKNOWN,
+            "badge_text": "",
+            "badge_bg": PACE_WARN_BG,
+            "badge_fg": PACE_WARN_FG,
+            "show_badge": False,
+            "cue": "",
+        }
+        self.pill_face.bind("<Configure>", self._on_pill_configure)
+        self.pill_face.bind("<ButtonPress-1>", self._start_drag)
+        self.pill_face.bind("<B1-Motion>", self._on_drag)
+        self.pill_face.bind("<Double-Button-1>", lambda _e: self._expand_from_pill())
+        self.pill_face.bind("<ButtonRelease-1>", self._end_drag)
+        self.pill.bind("<ButtonPress-1>", self._start_drag)
+        self.pill.bind("<B1-Motion>", self._on_drag)
+        self.pill.bind("<Double-Button-1>", lambda _e: self._expand_from_pill())
+        self.pill.bind("<ButtonRelease-1>", self._end_drag)
 
         self._pill_press_xy: tuple[int, int] | None = None
+
+        # Legacy names kept so older bind loops / updates don't crash if referenced.
+        self.pill_inner = self.pill
+        self.pill_canvas = self.pill_face
+        self.pill_pct = self.pill_face
+        self.pill_state = self.pill_face
+        self.pill_cue = self.pill_face
+        self.pill_border_canvas = self.pill_face
+        self._pill_dot_item = None
+        self._pill_arc = None
+        self._pill_arc_bg = None
 
         for child in self.expanded.winfo_children():
             if isinstance(child, tk.Label):
@@ -590,6 +583,7 @@ class UsageFloater(tk.Tk):
 
         self.card.bind("<Button-3>", lambda _e: self._open_settings())
         self.pill.bind("<Button-3>", lambda _e: self._open_settings())
+        self.pill_face.bind("<Button-3>", lambda _e: self._open_settings())
         self.expanded.bind("<Button-3>", lambda _e: self._open_settings())
         self.bind("<Escape>", lambda _e: self._collapse_to_pill())
 
@@ -803,13 +797,23 @@ class UsageFloater(tk.Tk):
         if show_pill:
             self.expanded.pack_forget()
             if not self.pill.winfo_ismapped():
-                self.pill.pack(fill="both", expand=True)
-            self.card.configure(padx=2, pady=2)
+                self.pill.pack()
+            # Zero padding: any card padx/pady eats the capsule bottom into the
+            # window clip (border looks cut off / "putol").
+            self.card.configure(padx=0, pady=0)
+            self.card.pack_configure(padx=0, pady=0)
+            self.outer.configure(bg=CARD)
+            self.after_idle(self._redraw_pill_face)
             return
 
         self.pill.pack_forget()
-        self.card.configure(padx=14, pady=12)
+        self.card.configure(padx=14, pady=12, bg=CARD)
         self.card.pack_configure(padx=1, pady=1)
+        self.outer.configure(bg=BORDER)
+        try:
+            self.configure(bg=BG)
+        except tk.TclError:
+            pass
 
         for child in (
             self.header,
@@ -900,18 +904,16 @@ class UsageFloater(tk.Tk):
             cue = ""
 
         self.status_dot.itemconfigure(self._dot_item, fill=color)
-        self.pill_canvas.itemconfigure(self._pill_dot_item, fill=color)
-
+        self._pill_view["dot_color"] = color
+        self._pill_view["cue"] = cue if cue else ""
         if cue:
             self.status_cue.configure(text=cue, fg=DOT_ERR)
             if not self.status_cue.winfo_ismapped():
                 self.status_cue.pack(side="left", padx=(4, 0))
-            self.pill_cue.configure(text=cue, fg=DOT_ERR)
-            if not self.pill_cue.winfo_ismapped():
-                self.pill_cue.pack(side="left", padx=(6, 0))
         else:
             self.status_cue.pack_forget()
-            self.pill_cue.pack_forget()
+        if self._show_pill_mode():
+            self._redraw_pill_face()
 
     def _error_cue_label(self) -> str:
         msg = (self.status_label.cget("text") or "").lower()
@@ -921,19 +923,248 @@ class UsageFloater(tk.Tk):
             return "Offline"
         return "Error"
 
-    def _apply_pill_border(self, border: str) -> None:
-        """OK = seamless cream (no gray fringe); WARN/STOP = accent ring."""
-        self.outer.configure(bg=border)
-        if border == CARD:
-            self.card.pack_configure(padx=0, pady=0)
+    def _on_pill_configure(self, event: object = None) -> None:
+        # Ignore noise while we lock geometry; only redraw on real size changes.
+        if event is not None and hasattr(event, "width") and hasattr(event, "height"):
+            w, h, _, _ = self._pill_metrics()
+            if int(event.width) == w and int(event.height) == h:
+                return
+        self._redraw_pill_face()
+
+    def _draw_capsule(
+        self,
+        canvas: tk.Canvas,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        fill: str,
+        *,
+        tag: str = "face",
+    ) -> None:
+        diam = y2 - y1
+        if diam < 2 or x2 - x1 < diam:
+            return
+        r = diam / 2.0
+        canvas.create_oval(x1, y1, x1 + diam, y2, fill=fill, outline="", tags=tag)
+        canvas.create_oval(x2 - diam, y1, x2, y2, fill=fill, outline="", tags=tag)
+        canvas.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline="", tags=tag)
+
+    def _draw_capsule_stroke(
+        self,
+        canvas: tk.Canvas,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        color: str,
+        *,
+        width: int = 2,
+        tag: str = "face",
+    ) -> None:
+        """Uniform capsule outline (balanced — no thick crescent ends)."""
+        diam = y2 - y1
+        if diam < 4 or x2 - x1 < diam:
+            return
+        r = diam / 2.0
+        canvas.create_arc(
+            x1, y1, x1 + diam, y2,
+            start=90, extent=180, style="arc",
+            outline=color, width=width, tags=tag,
+        )
+        canvas.create_arc(
+            x2 - diam, y1, x2, y2,
+            start=270, extent=180, style="arc",
+            outline=color, width=width, tags=tag,
+        )
+        canvas.create_line(x1 + r, y1, x2 - r, y1, fill=color, width=width, tags=tag)
+        canvas.create_line(x1 + r, y2, x2 - r, y2, fill=color, width=width, tags=tag)
+
+    def _pill_metrics(self) -> tuple[int, int, int, int]:
+        """Return (width, height, text_w, badge_w) for compact capsule."""
+        view = self._pill_view
+        text = str(view.get("text") or "—%")
+        font_nums = tkfont.Font(family=PILL_NUM_FONT[0], size=PILL_NUM_FONT[1], weight="bold")
+        font_badge = tkfont.Font(family=PILL_BADGE_FONT[0], size=PILL_BADGE_FONT[1], weight="bold")
+        text_w = font_nums.measure(text)
+        badge_w = 0
+        if view.get("show_badge"):
+            badge_w = font_badge.measure(str(view.get("badge_text") or "")) + 12
+        cue_w = 0
+        cue = str(view.get("cue") or "")
+        if cue:
+            font_cue = tkfont.Font(family="Segoe UI", size=7, weight="bold")
+            cue_w = font_cue.measure(cue) + 6
+        width = (
+            PILL_PAD_L
+            + PILL_RING
+            + PILL_GAP
+            + text_w
+            + (PILL_GAP + badge_w if badge_w else 0)
+            + cue_w
+            + PILL_PAD_R
+        )
+        return max(width, PILL_HEIGHT), PILL_HEIGHT, text_w, badge_w
+
+    def _redraw_pill_face(self) -> None:
+        """Compact cream pill + even border via color-key (no HRGN fringe)."""
+        c = self.pill_face
+        view = self._pill_view
+        border = getattr(self, "_pill_border_color", CARD)
+        w, h, _text_w, badge_w = self._pill_metrics()
+        key = "#%02X%02X%02X" % TRANSPARENT_KEY
+
+        # Lock drawable + toplevel to the same pixel box (prevents cut-off bottom).
+        c.configure(width=w, height=h, bg=key)
+        try:
+            hwnd = toplevel_hwnd(self)
+            pos = get_window_pos(hwnd)
+            self.geometry(f"{w}x{h}")
+            if pos is not None:
+                set_window_pos(hwnd, pos[0], pos[1])
+        except tk.TclError:
+            pass
+
+        c.delete("face")
+
+        for widget in (self, self.outer, self.card, self.pill):
+            try:
+                widget.configure(bg=key)
+            except tk.TclError:
+                pass
+
+        # Full-bleed key, then cream body + forced ring (Tk ovals skip the last
+        # row when y2 == height; card pady used to clip the same edge).
+        c.create_rectangle(0, 0, w + 1, h + 1, fill=key, outline="", tags="face")
+        x2, y2 = float(w - 1), float(h - 1)
+        if border != CARD:
+            bw = float(PILL_BORDER_PX)
+            self._draw_capsule(c, 0, 0, x2, y2, str(border))
+            self._draw_capsule(c, bw, bw, x2 - bw, y2 - bw, CARD)
+            # Solid top/bottom bars — guarantees continuous stroke mid-capsule.
+            rad = (y2 - 0) / 2.0
+            c.create_rectangle(rad, 0, x2 - rad, bw, fill=str(border), outline="", tags="face")
+            c.create_rectangle(
+                rad, y2 - bw, x2 - rad, y2, fill=str(border), outline="", tags="face"
+            )
         else:
+            self._draw_capsule(c, 0, 0, x2, y2, CARD)
+
+        # Ring + center dot
+        cx = PILL_PAD_L + PILL_RING / 2
+        cy = h / 2
+        r_out = PILL_RING / 2 - 2
+        c.create_arc(
+            cx - r_out, cy - r_out, cx + r_out, cy + r_out,
+            start=90, extent=-359.9, style="arc",
+            outline=BAR_BG, width=2, tags="face",
+        )
+        extent = float(view.get("ring_extent") or 0.0)
+        if extent:
+            c.create_arc(
+                cx - r_out, cy - r_out, cx + r_out, cy + r_out,
+                start=90, extent=extent, style="arc",
+                outline=str(view.get("ring_color") or WARN), width=2, tags="face",
+            )
+        dot_r = 3.5
+        c.create_oval(
+            cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r,
+            fill=str(view.get("dot_color") or DOT_UNKNOWN), outline="", tags="face",
+        )
+
+        # Numbers
+        x = PILL_PAD_L + PILL_RING + PILL_GAP
+        c.create_text(
+            x, cy,
+            text=str(view.get("text") or "—%"),
+            fill=str(view.get("number_color") or TEXT),
+            font=PILL_NUM_FONT,
+            anchor="w",
+            tags="face",
+        )
+        font_nums = tkfont.Font(family=PILL_NUM_FONT[0], size=PILL_NUM_FONT[1], weight="bold")
+        x += font_nums.measure(str(view.get("text") or "—%"))
+
+        # WARN/STOP chip
+        if view.get("show_badge") and badge_w:
+            x += PILL_GAP
+            bh = 18
+            by1 = cy - bh / 2
+            by2 = cy + bh / 2
+            bx2 = x + badge_w
+            rad = 6
+            bg = str(view.get("badge_bg") or PACE_WARN_BG)
+            c.create_oval(x, by1, x + rad * 2, by2, fill=bg, outline="", tags="face")
+            c.create_oval(bx2 - rad * 2, by1, bx2, by2, fill=bg, outline="", tags="face")
+            c.create_rectangle(x + rad, by1, bx2 - rad, by2, fill=bg, outline="", tags="face")
+            c.create_text(
+                x + badge_w / 2, cy,
+                text=str(view.get("badge_text") or ""),
+                fill=str(view.get("badge_fg") or PACE_WARN_FG),
+                font=PILL_BADGE_FONT,
+                anchor="center",
+                tags="face",
+            )
+            x = bx2
+
+        cue = str(view.get("cue") or "")
+        if cue:
+            x += PILL_GAP
+            c.create_text(
+                x, cy,
+                text=cue,
+                fill=DOT_ERR,
+                font=("Segoe UI", 7, "bold"),
+                anchor="w",
+                tags="face",
+            )
+
+        # Re-assert color-key after geometry (click-through / layout can clear it).
+        try:
+            hwnd = toplevel_hwnd(self)
+            clear_window_region(hwnd)
+            set_color_key(hwnd, TRANSPARENT_KEY)
+        except Exception:
+            pass
+
+    def _apply_pill_border(self, border: str) -> None:
+        """OK = seamless cream; WARN/STOP = even capsule border."""
+        self._pill_border_color = border
+        if self._show_pill_mode():
+            self.card.configure(padx=0, pady=0)
+            self.card.pack_configure(padx=0, pady=0)
+            self._redraw_pill_face()
+            self._apply_rounded_corners(*self._target_size())
+        elif border != CARD:
+            self.outer.configure(bg=border)
+            self.card.configure(bg=CARD)
             self.card.pack_configure(padx=2, pady=2)
+        else:
+            self.card.pack_configure(padx=0, pady=0)
+    def _apply_rounded_corners(self, width: int, height: int) -> None:
+        hwnd = toplevel_hwnd(self)
+        if self._show_pill_mode():
+            # Color-key shape — drawn capsule IS the visible shape (balanced border).
+            clear_window_region(hwnd)
+            set_color_key(hwnd, TRANSPARENT_KEY)
+            return
+
+        set_color_key(hwnd, None)
+        set_rounded_corners(hwnd, width, height, CORNER_RADIUS)
 
     def _update_pill_percent(self) -> None:
+        view = self._pill_view
         if self._last_usage is None:
-            self.pill_pct.configure(text="—%", fg=TEXT)
-            self.pill_canvas.itemconfigure(self._pill_arc, extent=0)
-            self.pill_state.pack_forget()
+            view.update(
+                {
+                    "text": "—%",
+                    "number_color": TEXT,
+                    "ring_extent": 0.0,
+                    "show_badge": False,
+                    "badge_text": "",
+                }
+            )
+            self._apply_pill_border(CARD)
             return
 
         metric = effective_pill_metric(self.settings)
@@ -946,32 +1177,45 @@ class UsageFloater(tk.Tk):
                 fair_label=format_units(pace.fair_today),
                 fill_pct=pct,
             )
-            self.pill_pct.configure(text=chrome.text, fg=chrome.number_color)
             extent = -max(1.0, min(359.9, min(pct, 100.0) / 100.0 * 359.9))
-            self.pill_canvas.itemconfigure(self._pill_arc, extent=extent, outline=chrome.ring_color)
+            view.update(
+                {
+                    "text": chrome.text,
+                    "number_color": chrome.number_color,
+                    "ring_color": chrome.ring_color,
+                    "ring_extent": extent,
+                    "show_badge": chrome.show_badge,
+                    "badge_text": chrome.badge_text,
+                    "badge_bg": chrome.badge_bg,
+                    "badge_fg": chrome.badge_fg,
+                }
+            )
             self._apply_pill_border(chrome.border_color)
-            if chrome.show_badge:
-                self.pill_state.configure(
-                    text=chrome.badge_text, bg=chrome.badge_bg, fg=chrome.badge_fg
-                )
-                if not self.pill_state.winfo_ismapped():
-                    self.pill_state.pack(side="left", padx=(6, 0))
-            else:
-                self.pill_state.pack_forget()
             return
 
-        self.pill_state.pack_forget()
-        # Pace selected but not ready yet — show placeholder.
         if metric == "pace":
-            self.pill_pct.configure(text="—%", fg=TEXT)
-            self.pill_canvas.itemconfigure(self._pill_arc, extent=0)
+            view.update(
+                {
+                    "text": "—%",
+                    "number_color": TEXT,
+                    "ring_extent": 0.0,
+                    "show_badge": False,
+                }
+            )
+            self._apply_pill_border(CARD)
             return
 
         value = resolve_minimized_percent(self._last_usage, metric)
-        self.pill_pct.configure(text=format_usage_percent(value), fg=TEXT)
         extent = -max(1.0, min(359.9, value / 100.0 * 359.9))
-        color = bar_color_for_percent(value)
-        self.pill_canvas.itemconfigure(self._pill_arc, extent=extent, outline=color)
+        view.update(
+            {
+                "text": format_usage_percent(value),
+                "number_color": TEXT,
+                "ring_color": bar_color_for_percent(value),
+                "ring_extent": extent,
+                "show_badge": False,
+            }
+        )
         self._apply_pill_border(CARD)
 
     def _update_reset_countdown(self) -> None:
@@ -1033,8 +1277,8 @@ class UsageFloater(tk.Tk):
     def _target_size(self) -> tuple[int, int]:
         self.update_idletasks()
         if self._show_pill_mode():
-            # Hug content — no forced wide empty capsule.
-            return max(self.winfo_reqwidth(), 1), max(self.winfo_reqheight(), 1)
+            w, h, _, _ = self._pill_metrics()
+            return w, h
         return WINDOW_WIDTH, max(self.winfo_reqheight(), 1)
 
     def _place_top_right(self) -> None:
@@ -1168,20 +1412,6 @@ class UsageFloater(tk.Tk):
 
         self._set_alpha(start)
         step(1)
-
-    def _apply_rounded_corners(self, width: int, height: int) -> None:
-        # Capsule ends: ellipse diameter = height (smoother with layered DWM).
-        radius = max(int(height), 1) if self._show_pill_mode() else CORNER_RADIUS
-        hwnd = toplevel_hwnd(self)
-        set_rounded_corners(hwnd, width, height, radius)
-        # Re-apply once after layout settles (avoids jagged first paint).
-        if self._show_pill_mode():
-            self.after(
-                16,
-                lambda w=width, h=height, r=radius: set_rounded_corners(
-                    toplevel_hwnd(self), w, h, r
-                ),
-            )
 
     def _start_drag(self, event: tk.Event) -> None:
         pos = get_window_pos(toplevel_hwnd(self))
