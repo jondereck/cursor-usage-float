@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 # Soft charcoal-on-cream system (calm, not generic toolkit blue)
 BG = "#ECEAE6"
 CARD = "#F7F6F3"
@@ -49,6 +51,62 @@ def pace_accent(state: str) -> str:
     if state == "WARN":
         return WARN
     return DOT_OK
+
+
+def frame_border_for_state(state: str) -> str:
+    """Expanded card border tint."""
+    if state == "STOP":
+        return CRITICAL
+    if state == "WARN":
+        return WARN
+    return BORDER
+
+
+def pill_border_for_state(state: str) -> str:
+    """Pill outline: invisible on OK (no jagged gray), accent on WARN/STOP."""
+    if state == "STOP":
+        return CRITICAL
+    if state == "WARN":
+        return WARN
+    return CARD
+
+
+@dataclass(frozen=True)
+class PillChrome:
+    """Compact capsule: ring + `2.8%/3.0%` + optional WARN/STOP chip."""
+
+    text: str
+    number_color: str
+    ring_color: str
+    badge_text: str
+    badge_bg: str
+    badge_fg: str
+    border_color: str
+    show_badge: bool
+
+
+def pill_chrome(
+    state: str,
+    *,
+    used_label: str,
+    fair_label: str,
+    fill_pct: float,
+) -> PillChrome:
+    """Exact NOW—WARN reference: one line pace + chip."""
+    warn_or_stop = state in ("WARN", "STOP")
+    accent = pace_accent(state) if warn_or_stop else TEXT
+    ring = pace_accent(state) if warn_or_stop else bar_color_for_percent(min(fill_pct, 100.0))
+    badge_bg, badge_fg = pace_badge_colors(state)
+    return PillChrome(
+        text=f"{used_label}%/{fair_label}%",
+        number_color=accent,
+        ring_color=ring,
+        badge_text="" if state == "OK" else state,
+        badge_bg=badge_bg,
+        badge_fg=badge_fg,
+        border_color=pill_border_for_state(state),
+        show_badge=warn_or_stop,
+    )
 
 
 def _hex_to_rgb(color: str) -> tuple[int, int, int]:

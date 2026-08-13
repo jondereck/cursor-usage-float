@@ -54,23 +54,27 @@ from theme import (
     USAGE_MARK,
     WARN,
     bar_color_for_percent,
+    frame_border_for_state,
     pace_accent,
     pace_badge_colors,
+    pill_border_for_state,
+    pill_chrome,
 )
 from win_app_icon import apply_tk_icon, set_app_user_model_id
 from win_clickthrough import set_click_through, set_rounded_corners, toplevel_hwnd
-from win_taskbar import TaskbarProxy
+from win_taskbar import apply_taskbar_button
+from win_tray import TrayIcon
 from win_hotkey import GlobalHotkey
 from win_startup import set_start_with_windows
 
 POLL_MS = 3 * 60 * 1000
 STALE_MS = 2 * POLL_MS
 WINDOW_WIDTH = 300
-PILL_WIDTH = 118
+PILL_WIDTH = 110
 PILL_WIDTH_PACE = 168
-PILL_HEIGHT = 44
+PILL_HEIGHT = 40
 CORNER_RADIUS = 18
-PILL_CORNER_RADIUS = 16
+PILL_CORNER_RADIUS = 22  # unused in pill mode; radius = height
 GEAR_ICON = "\uE713"
 FADE_OUT_MS = 90
 FADE_IN_MS = 110
@@ -142,7 +146,7 @@ class ProgressRow(tk.Frame):
         )
         self.pct_label.pack(side="right")
 
-        bar_h = 12 if hero else (6 if compact else 8)
+        bar_h = 14 if hero else (6 if compact else 8)
         self._bar_h = bar_h
         self._bar_radius = bar_h / 2.0
         self._seg_ids: list[int] = []
@@ -279,22 +283,31 @@ class UsageFloater(tk.Tk):
         self._settings_open = False
         self._settings_win: SettingsWindow | None = None
         self._click_through_hotkey: GlobalHotkey | None = None
-        self._taskbar: TaskbarProxy | None = None
+        self._tray: TrayIcon | None = None
 
         self.attributes("-topmost", bool(self.settings.always_on_top))
 
         self._build_ui()
-        self._taskbar = TaskbarProxy(
+        self._tray = TrayIcon(
             self,
-            title="Cursor Usage",
-            on_restore=self._restore_from_taskbar,
-            on_close=self.destroy,
+            tip="Cursor Usage",
             icon_path=APP_ICON,
+            on_show=self._on_tray_show,
+            on_settings=self._open_settings,
+            on_quit=self.destroy,
+            is_start_with_windows=lambda: bool(self.settings.start_with_windows),
+            is_start_minimized=lambda: bool(self.settings.start_minimized),
+            set_start_with_windows=self._tray_set_start_with_windows,
+            set_start_minimized=self._tray_set_start_minimized,
         )
         self._apply_settings_side_effects()
         self._apply_layout(animate=False)
         self._place_top_right()
         self._register_click_through_hotkey()
+        # Tray only — never a taskbar button for this borderless floater.
+        self.after(100, self._hide_from_taskbar)
+        if self._tray is not None:
+            self.after(150, self._tray.show)
         self.after(200, self.refresh_async)
         self.after(POLL_MS, self._schedule_poll)
         self.after(30_000, self._schedule_stale_check)
@@ -377,9 +390,9 @@ class UsageFloater(tk.Tk):
             text="",
             bg=CARD,
             fg=MUTED,
-            font=("Segoe UI Semibold", 9),
+            font=("Segoe UI Semibold", 8),
             padx=8,
-            pady=2,
+            pady=3,
         )
 
         self.pace_reset_btn = tk.Button(
@@ -471,30 +484,30 @@ class UsageFloater(tk.Tk):
         )
         self.status_label.pack(fill="x", pady=(10, 0))
 
-        # --- Pill ---
+        # --- Pill: ring | 2.8%/3.0% | optional WARN/STOP (tight capsule) ---
         self.pill = tk.Frame(self.card, bg=CARD)
         self.pill_inner = tk.Frame(self.pill, bg=CARD)
-        self.pill_inner.pack(padx=10, pady=7)
+        self.pill_inner.pack(padx=8, pady=6)
 
         self.pill_canvas = tk.Canvas(
             self.pill_inner,
-            width=28,
-            height=28,
+            width=26,
+            height=26,
             bg=CARD,
             highlightthickness=0,
             bd=0,
         )
-        self.pill_canvas.pack(side="left", padx=(0, 8))
+        self.pill_canvas.pack(side="left", padx=(0, 6))
         self._pill_arc_bg = self.pill_canvas.create_arc(
-            2, 2, 26, 26, start=90, extent=-359.9, style="arc",
+            2, 2, 24, 24, start=90, extent=-359.9, style="arc",
             outline=BAR_BG, width=3,
         )
         self._pill_arc = self.pill_canvas.create_arc(
-            2, 2, 26, 26, start=90, extent=0, style="arc",
+            2, 2, 24, 24, start=90, extent=0, style="arc",
             outline=bar_color_for_percent(0), width=3,
         )
         self._pill_dot_item = self.pill_canvas.create_oval(
-            10, 10, 18, 18, fill=DOT_UNKNOWN, outline=""
+            9, 9, 17, 17, fill=DOT_UNKNOWN, outline=""
         )
 
         self.pill_pct = tk.Label(
@@ -502,7 +515,7 @@ class UsageFloater(tk.Tk):
             text="—%",
             bg=CARD,
             fg=TEXT,
-            font=("Segoe UI Semibold", 10),
+            font=("Segoe UI", 11, "bold"),
         )
         self.pill_pct.pack(side="left")
 
@@ -511,10 +524,11 @@ class UsageFloater(tk.Tk):
             text="",
             bg=CARD,
             fg=MUTED,
-            font=("Segoe UI", 7, "bold"),
-            padx=4,
+            font=("Segoe UI", 8, "bold"),
+            padx=6,
+            pady=1,
         )
-        # packed when pace metric is active
+        # packed when pace is WARN/STOP
 
         self.pill_cue = tk.Label(
             self.pill_inner,
@@ -633,10 +647,38 @@ class UsageFloater(tk.Tk):
         if self._click_through_hotkey is not None:
             self._click_through_hotkey.unregister()
             self._click_through_hotkey = None
-        if self._taskbar is not None:
-            self._taskbar.destroy()
-            self._taskbar = None
+        if self._tray is not None:
+            self._tray.destroy()
+            self._tray = None
         super().destroy()
+
+    def _hide_from_taskbar(self) -> None:
+        """Keep presence in the system tray only — no taskbar button."""
+        apply_taskbar_button(toplevel_hwnd(self), show=False)
+
+    def _on_tray_show(self) -> None:
+        """Tray left-click / Show: bring float back (expand pill if needed)."""
+        try:
+            self.deiconify()
+        except tk.TclError:
+            pass
+        if self._show_pill_mode():
+            self._expand_from_pill()
+        try:
+            self.lift()
+            self.focus_force()
+        except tk.TclError:
+            pass
+        self._hide_from_taskbar()
+
+    def _tray_set_start_with_windows(self, enabled: bool) -> None:
+        self.settings.start_with_windows = bool(enabled)
+        set_start_with_windows(self.settings.start_with_windows)
+        save_settings(self.settings)
+
+    def _tray_set_start_minimized(self, enabled: bool) -> None:
+        self.settings.start_minimized = bool(enabled)
+        save_settings(self.settings)
 
     def _toggle_minimized(self) -> None:
         if self._animating:
@@ -648,23 +690,6 @@ class UsageFloater(tk.Tk):
             self._force_expanded = False
             self._minimized = not self._minimized
         self._apply_layout(animate=True)
-
-    def _restore_from_taskbar(self) -> None:
-        """Taskbar click: keep the float visible and expand it."""
-        self._expand_from_pill()
-        try:
-            self.lift()
-            self.focus_force()
-        except tk.TclError:
-            pass
-
-    def _sync_taskbar_button(self) -> None:
-        if self._taskbar is None:
-            return
-        if self._show_pill_mode():
-            self._taskbar.show()
-        else:
-            self._taskbar.hide()
 
     def _collapse_to_pill(self) -> None:
         if self._animating or self._show_pill_mode():
@@ -708,7 +733,6 @@ class UsageFloater(tk.Tk):
             self._resize_to_content(pin_right=True)
             self._was_pill = want_pill
             self._set_alpha(1.0)
-            self._sync_taskbar_button()
             return
 
         # Alpha crossfade beats size-morph on Windows (no SetWindowRgn stutter).
@@ -726,7 +750,6 @@ class UsageFloater(tk.Tk):
             self._apply_rounded_corners(end_w, end_h)
             self._paint_status()
             self._update_pill_percent()
-            self._sync_taskbar_button()
             self._fade_alpha(0.0, 1.0, FADE_IN_MS, on_done=self._clear_animating)
 
         self._fade_alpha(1.0, 0.0, FADE_OUT_MS, on_done=after_fade_out)
@@ -740,11 +763,12 @@ class UsageFloater(tk.Tk):
             self.expanded.pack_forget()
             if not self.pill.winfo_ismapped():
                 self.pill.pack(fill="both", expand=True)
-            self.card.configure(padx=4, pady=2)
+            self.card.configure(padx=2, pady=2)
             return
 
         self.pill.pack_forget()
         self.card.configure(padx=14, pady=12)
+        self.card.pack_configure(padx=1, pady=1)
 
         for child in (
             self.header,
@@ -856,6 +880,14 @@ class UsageFloater(tk.Tk):
             return "Offline"
         return "Error"
 
+    def _apply_pill_border(self, border: str) -> None:
+        """OK = seamless cream (no gray fringe); WARN/STOP = accent ring."""
+        self.outer.configure(bg=border)
+        if border == CARD:
+            self.card.pack_configure(padx=0, pady=0)
+        else:
+            self.card.pack_configure(padx=2, pady=2)
+
     def _update_pill_percent(self) -> None:
         if self._last_usage is None:
             self.pill_pct.configure(text="—%", fg=TEXT)
@@ -867,27 +899,28 @@ class UsageFloater(tk.Tk):
         if metric == "pace" and self._last_pace is not None:
             pace = self._last_pace
             pct = min(150.0, pace.percent_of_fair * 100.0)
-            short = f"{format_units(pace.used_today)}%/{format_units(pace.fair_today)}%"
-            accent = self._pace_accent(pace.state) if pace.state != "OK" else TEXT
-            self.pill_pct.configure(text=short, fg=accent)
-            extent = -max(1.0, min(359.9, min(pct, 100.0) / 100.0 * 359.9))
-            ring = (
-                self._pace_accent(pace.state)
-                if pace.state != "OK"
-                else bar_color_for_percent(min(pct, 100.0))
+            chrome = pill_chrome(
+                pace.state,
+                used_label=format_units(pace.used_today),
+                fair_label=format_units(pace.fair_today),
+                fill_pct=pct,
             )
-            self.pill_canvas.itemconfigure(self._pill_arc, extent=extent, outline=ring)
-            if pace.state == "OK":
-                self.pill_state.pack_forget()
-            else:
-                bg, fg = pace_badge_colors(pace.state)
-                self.pill_state.configure(text=pace.state, bg=bg, fg=fg)
+            self.pill_pct.configure(text=chrome.text, fg=chrome.number_color)
+            extent = -max(1.0, min(359.9, min(pct, 100.0) / 100.0 * 359.9))
+            self.pill_canvas.itemconfigure(self._pill_arc, extent=extent, outline=chrome.ring_color)
+            self._apply_pill_border(chrome.border_color)
+            if chrome.show_badge:
+                self.pill_state.configure(
+                    text=chrome.badge_text, bg=chrome.badge_bg, fg=chrome.badge_fg
+                )
                 if not self.pill_state.winfo_ismapped():
                     self.pill_state.pack(side="left", padx=(6, 0))
+            else:
+                self.pill_state.pack_forget()
             return
 
         self.pill_state.pack_forget()
-        # Pace selected but not ready yet — show placeholder, not Total.
+        # Pace selected but not ready yet — show placeholder.
         if metric == "pace":
             self.pill_pct.configure(text="—%", fg=TEXT)
             self.pill_canvas.itemconfigure(self._pill_arc, extent=0)
@@ -898,6 +931,7 @@ class UsageFloater(tk.Tk):
         extent = -max(1.0, min(359.9, value / 100.0 * 359.9))
         color = bar_color_for_percent(value)
         self.pill_canvas.itemconfigure(self._pill_arc, extent=extent, outline=color)
+        self._apply_pill_border(CARD)
 
     def _update_reset_countdown(self) -> None:
         if self._show_pill_mode() or not self.settings.show_reset_countdown:
@@ -958,15 +992,9 @@ class UsageFloater(tk.Tk):
     def _target_size(self) -> tuple[int, int]:
         self.update_idletasks()
         if self._show_pill_mode():
-            width = (
-                PILL_WIDTH_PACE
-                if effective_pill_metric(self.settings) == "pace"
-                else PILL_WIDTH
-            )
-        else:
-            width = WINDOW_WIDTH
-        height = max(self.winfo_reqheight(), 1)
-        return width, height
+            # Hug content — no forced wide empty capsule.
+            return max(self.winfo_reqwidth(), 1), max(self.winfo_reqheight(), 1)
+        return WINDOW_WIDTH, max(self.winfo_reqheight(), 1)
 
     def _place_top_right(self) -> None:
         width, height = self._target_size()
@@ -1039,8 +1067,18 @@ class UsageFloater(tk.Tk):
         step(1)
 
     def _apply_rounded_corners(self, width: int, height: int) -> None:
-        radius = PILL_CORNER_RADIUS if self._show_pill_mode() else CORNER_RADIUS
-        set_rounded_corners(toplevel_hwnd(self), width, height, radius)
+        # Capsule ends: ellipse diameter = height (smoother with layered DWM).
+        radius = max(int(height), 1) if self._show_pill_mode() else CORNER_RADIUS
+        hwnd = toplevel_hwnd(self)
+        set_rounded_corners(hwnd, width, height, radius)
+        # Re-apply once after layout settles (avoids jagged first paint).
+        if self._show_pill_mode():
+            self.after(
+                16,
+                lambda w=width, h=height, r=radius: set_rounded_corners(
+                    toplevel_hwnd(self), w, h, r
+                ),
+            )
 
     def _start_drag(self, event: tk.Event) -> None:
         self._drag_x = event.x_root - self.winfo_x()
@@ -1206,13 +1244,11 @@ class UsageFloater(tk.Tk):
             if not self.pace_msg.winfo_ismapped():
                 self.pace_msg.pack(fill="x", pady=(4, 0), before=self.pace_meta)
 
-        # Soft border tint on soft-stop
-        if pace.state == "STOP":
-            self.outer.configure(bg=CRITICAL)
-        elif pace.state == "WARN":
-            self.outer.configure(bg=WARN)
+        if self._show_pill_mode():
+            self._apply_pill_border(pill_border_for_state(pace.state))
         else:
-            self.outer.configure(bg=BORDER)
+            self.outer.configure(bg=frame_border_for_state(pace.state))
+            self.card.pack_configure(padx=1, pady=1)
 
     def _reset_pace_today(self) -> None:
         """Re-baseline local used-today counter (does not change Cursor usage)."""
@@ -1272,7 +1308,7 @@ def main() -> None:
     app.after(100, app._apply_settings_side_effects)
     # Re-apply icon after the HWND is fully realized (taskbar / alt-tab).
     app.after(100, lambda: apply_tk_icon(app, APP_ICON))
-    app.after(150, app._sync_taskbar_button)
+    app.after(150, app._hide_from_taskbar)
     app.mainloop()
 
 

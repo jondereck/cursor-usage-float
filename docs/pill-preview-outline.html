@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Pill — orange vs dark outline</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background:
+        radial-gradient(1200px 700px at 20% 10%, #4a7c3a 0%, transparent 55%),
+        radial-gradient(900px 600px at 90% 80%, #2f5a28 0%, transparent 50%),
+        #3d6b32;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 24px;
+    }
+    .board { width: min(720px, 100%); }
+    h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; }
+    .sub { margin: 0 0 32px; color: rgba(255,255,255,0.78); font-size: 14px; }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+    }
+    .col { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    .label {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .hint { font-size: 12px; color: rgba(255,255,255,0.7); text-align: center; max-width: 280px; line-height: 1.4; }
+    .stage { height: 140px; display: flex; align-items: center; justify-content: center; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      height: 52px;
+      padding: 0 14px 0 12px;
+      border-radius: 999px;
+      gap: 10px;
+      background: #F7F6F3;
+      box-shadow: 0 8px 22px rgba(0,0,0,0.28);
+      border: 2px solid;
+    }
+    .pill.orange { border-color: #F59E0B; }
+    .pill.dark { border-color: #1C1917; }
+
+    .ring { width: 28px; height: 28px; flex: 0 0 auto; }
+    .nums {
+      font-size: 16px;
+      font-weight: 650;
+      color: #F59E0B;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .badge {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      padding: 4px 8px;
+      border-radius: 8px;
+      background: #FEF3C7;
+      color: #92400E;
+    }
+  </style>
+</head>
+<body>
+  <div class="board">
+    <h1>Outline options</h1>
+    <p class="sub">Same pill content — only the border color changes.</p>
+    <div class="row">
+      <div class="col">
+        <div class="label">Now — orange</div>
+        <div class="stage">
+          <div class="pill orange">
+            <svg class="ring" viewBox="0 0 36 36">
+              <circle cx="18" cy="18" r="14" fill="none" stroke="#E7E5E4" stroke-width="3.2"/>
+              <circle cx="18" cy="18" r="14" fill="none" stroke="#F59E0B" stroke-width="3.2"
+                stroke-linecap="round" stroke-dasharray="82 88" transform="rotate(-90 18 18)"/>
+              <circle cx="18" cy="18" r="4.2" fill="#16A34A"/>
+            </svg>
+            <div class="nums">2.8%/3.0%</div>
+            <div class="badge">WARN</div>
+          </div>
+        </div>
+        <div class="hint">Current: orange border matches ring + numbers</div>
+      </div>
+
+      <div class="col">
+        <div class="label">Dark outline</div>
+        <div class="stage">
+          <div class="pill dark">
+            <svg class="ring" viewBox="0 0 36 36">
+              <circle cx="18" cy="18" r="14" fill="none" stroke="#E7E5E4" stroke-width="3.2"/>
+              <circle cx="18" cy="18" r="14" fill="none" stroke="#F59E0B" stroke-width="3.2"
+                stroke-linecap="round" stroke-dasharray="82 88" transform="rotate(-90 18 18)"/>
+              <circle cx="18" cy="18" r="4.2" fill="#16A34A"/>
+            </svg>
+            <div class="nums">2.8%/3.0%</div>
+            <div class="badge">WARN</div>
+          </div>
+        </div>
+        <div class="hint">Dark charcoal border — WARN still orange inside</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

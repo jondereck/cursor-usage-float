@@ -7,8 +7,15 @@
   rounded to a whole percent) and **Other Models** (API pool). Removed the
   old blended Total that no longer exists in Cursor.
 - Today's pace follows the higher of the two pools.
-- Minimize keeps the float on screen (pill) and also shows a **taskbar**
-  button; clicking it restores the expanded window.
+- Minimize keeps the float on screen (pill). Presence is **system tray only**
+  — no taskbar button while the app is running.
+- Pill matches NOW—WARN reference: ring + `2.8%/3.0%` + chip; tight
+  left/right padding (sizes to content, no empty capsule length).
+- Header **−** collapses to the on-screen **pill**. Tray left-click
+  restores/expands; right-click menu (Mechvibes-style): **Cursor Usage**,
+  **Settings**, **Extras** (Enable at Startup / Start Minimized), **Quit**.
+- Tray click crash fixed: Win32 `WndProc` must not call Tk (`after`); clicks
+  are queued and drained on the Tk poll (left/right no longer hard-exit).
 
 ## 2026-07-16
 

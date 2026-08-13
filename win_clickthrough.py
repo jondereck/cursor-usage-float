@@ -45,16 +45,36 @@ def toplevel_hwnd(widget: object) -> int:
 
 
 def set_rounded_corners(hwnd: int, width: int, height: int, radius: int = 16) -> None:
-    """Clip the top-level window to a rounded rectangle. No-op off Windows."""
+    """Clip the top-level window to a rounded rectangle. No-op off Windows.
+
+    ``radius`` is the CreateRoundRectRgn ellipse diameter (not CSS border-radius).
+    For a full capsule, pass ``height`` so each end is a semicircle.
+
+    Enables WS_EX_LAYERED so DWM soft-composites the clip (less jagged edges).
+    """
     if sys.platform != "win32" or not hwnd or width <= 0 or height <= 0:
         return
     try:
         import ctypes
 
-        # CreateRoundRectRgn uses exclusive right/bottom edges.
-        hrgn = ctypes.windll.gdi32.CreateRoundRectRgn(
-            0, 0, int(width) + 1, int(height) + 1, int(radius), int(radius)
+        user32 = ctypes.windll.user32
+        gdi32 = ctypes.windll.gdi32
+
+        GWL_EXSTYLE = -20
+        WS_EX_LAYERED = 0x00080000
+        LWA_ALPHA = 0x00000002
+
+        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        if not (style & WS_EX_LAYERED):
+            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
+            # Fully opaque — layered mode mainly for smoother edge compositing.
+            user32.SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
+
+        # Capsule: ellipse diameter == height. +1 exclusive bottom/right.
+        ellipse = max(1, int(radius))
+        hrgn = gdi32.CreateRoundRectRgn(
+            0, 0, int(width) + 1, int(height) + 1, ellipse, ellipse
         )
-        ctypes.windll.user32.SetWindowRgn(hwnd, hrgn, True)
+        user32.SetWindowRgn(hwnd, hrgn, True)
     except Exception:
         return
