@@ -69,6 +69,7 @@ from win_clickthrough import (
     get_window_pos,
     set_click_through,
     set_color_key,
+    set_layered_attrs,
     set_rounded_corners,
     set_window_pos,
     toplevel_hwnd,
@@ -757,20 +758,18 @@ class UsageFloater(tk.Tk):
         if not animate or was_pill == want_pill:
             self._cancel_animation()
             self._set_chrome(want_pill)
-            self._resize_to_content(pin_right=True)
+            # Keep top-left fixed so expand/collapse doesn't jump.
+            self._resize_to_content(pin_right=False)
             self._was_pill = want_pill
             self._set_alpha(1.0)
             return
 
         # Alpha crossfade beats size-morph on Windows (no SetWindowRgn stutter).
-        start_w = max(self.winfo_width(), 1)
         pos = get_window_pos(toplevel_hwnd(self))
         if pos is not None:
-            x_right = pos[0] + start_w
-            y = pos[1]
+            anchor_x, anchor_y = pos[0], pos[1]
         else:
-            x_right = self.winfo_x() + start_w
-            y = self.winfo_y()
+            anchor_x, anchor_y = int(self.winfo_x()), int(self.winfo_y())
         self._was_pill = want_pill
         self._animating = True
 
@@ -780,8 +779,9 @@ class UsageFloater(tk.Tk):
             end_w, end_h = self._target_size()
             self.geometry(f"{end_w}x{end_h}")
             hwnd = toplevel_hwnd(self)
-            if not set_window_pos(hwnd, x_right - end_w, y):
-                self.geometry(f"{end_w}x{end_h}+{x_right - end_w}+{y}")
+            # Same top-left as before the toggle (do not pin-right / slide).
+            if not set_window_pos(hwnd, anchor_x, anchor_y):
+                self.geometry(f"{end_w}x{end_h}+{anchor_x}+{anchor_y}")
             self._apply_rounded_corners(end_w, end_h)
             self._paint_status()
             self._update_pill_percent()
@@ -792,6 +792,9 @@ class UsageFloater(tk.Tk):
     def _clear_animating(self) -> None:
         self._animating = False
         self._set_alpha(1.0)
+        if self._show_pill_mode():
+            # Re-assert color-key after fade (Tk alpha can clear it).
+            self._apply_rounded_corners(*self._target_size())
 
     def _set_chrome(self, show_pill: bool) -> None:
         if show_pill:
@@ -810,9 +813,16 @@ class UsageFloater(tk.Tk):
         self.card.configure(padx=14, pady=12, bg=CARD)
         self.card.pack_configure(padx=1, pady=1)
         self.outer.configure(bg=BORDER)
+        self.pill.configure(bg=CARD)
         try:
             self.configure(bg=BG)
         except tk.TclError:
+            pass
+        # Expanded must not keep pill color-key (magenta would show as pink).
+        try:
+            hwnd = toplevel_hwnd(self)
+            set_color_key(hwnd, None)
+        except Exception:
             pass
 
         for child in (
@@ -1364,8 +1374,23 @@ class UsageFloater(tk.Tk):
         self._apply_rounded_corners(width, height)
 
     def _set_alpha(self, value: float) -> None:
+        """Fade opacity without dropping pill color-key (avoids pink edges)."""
+        alpha = max(0.0, min(1.0, value))
+        hwnd = toplevel_hwnd(self)
         try:
-            self.attributes("-alpha", max(0.0, min(1.0, value)))
+            pill_up = bool(self.pill.winfo_ismapped())
+        except tk.TclError:
+            pill_up = False
+        if hwnd and pill_up:
+            # Tk -alpha uses LWA_ALPHA alone and clears LWA_COLORKEY → magenta shows.
+            set_layered_attrs(
+                hwnd,
+                color_key=TRANSPARENT_KEY,
+                alpha=int(round(alpha * 255)),
+            )
+            return
+        try:
+            self.attributes("-alpha", alpha)
         except tk.TclError:
             pass
 

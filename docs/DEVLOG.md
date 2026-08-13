@@ -23,6 +23,9 @@
 - WARN/STOP pill border: continuous capsule (no cut-off bottom). Cause was
   `card` `pady=2` clipping the canvas plus Tk oval fill clipped at
   `y2 == height`; fixed with zero pill padding + 1px draw inset + color-key.
+- Expand/collapse: keep top-left anchor (was pin-right, so the pill jumped).
+  Pink edges after toggle: Tk `-alpha` cleared LWA_COLORKEY so magenta key
+  showed; fade now keeps color-key+alpha together via `set_layered_attrs`.
 
 ## 2026-07-16
 

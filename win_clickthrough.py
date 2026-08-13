@@ -109,7 +109,22 @@ def clear_window_region(hwnd: int) -> None:
 
 
 def set_color_key(hwnd: int, rgb: tuple[int, int, int] | None) -> None:
-    """Enable/disable LWA_COLORKEY. ``rgb=None`` restores opaque layered alpha."""
+    """Enable/disable LWA_COLORKEY (keeps full opacity). Prefer set_layered_attrs."""
+    set_layered_attrs(hwnd, color_key=rgb, alpha=255)
+
+
+def set_layered_attrs(
+    hwnd: int,
+    *,
+    color_key: tuple[int, int, int] | None = None,
+    alpha: int = 255,
+) -> None:
+    """Set color-key and/or opacity in one call.
+
+    Tk ``-alpha`` alone uses LWA_ALPHA and clears LWA_COLORKEY — magenta key
+    pixels then show as pink edges. Always pass both when the pill is shaped
+    via color-key.
+    """
     if sys.platform != "win32" or not hwnd:
         return
     try:
@@ -125,14 +140,14 @@ def set_color_key(hwnd: int, rgb: tuple[int, int, int] | None) -> None:
         if not (style & WS_EX_LAYERED):
             user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
 
-        if rgb is None:
-            user32.SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
-            return
-
-        r, g, b = (int(rgb[0]) & 255, int(rgb[1]) & 255, int(rgb[2]) & 255)
-        # COLORREF is 0x00bbggrr
-        colorref = r | (g << 8) | (b << 16)
-        user32.SetLayeredWindowAttributes(hwnd, colorref, 0, LWA_COLORKEY)
+        flags = LWA_ALPHA
+        colorref = 0
+        if color_key is not None:
+            r, g, b = (int(color_key[0]) & 255, int(color_key[1]) & 255, int(color_key[2]) & 255)
+            colorref = r | (g << 8) | (b << 16)
+            flags |= LWA_COLORKEY
+        a = max(0, min(255, int(alpha)))
+        user32.SetLayeredWindowAttributes(hwnd, colorref, a, flags)
     except Exception:
         return
 
