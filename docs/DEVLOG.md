@@ -1,5 +1,15 @@
 # Dev log — cursor-usage-float
 
+## 2026-08-13
+
+### Done
+- Usage bars now match Cursor's dashboard: **Cursor Models** (auto pool,
+  rounded to a whole percent) and **Other Models** (API pool). Removed the
+  old blended Total that no longer exists in Cursor.
+- Today's pace follows the higher of the two pools.
+- Minimize keeps the float on screen (pill) and also shows a **taskbar**
+  button; clicking it restores the expanded window.
+
 ## 2026-07-16
 
 ### Done

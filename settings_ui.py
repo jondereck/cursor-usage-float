@@ -41,9 +41,9 @@ DENSITY_LABELS = {
 }
 
 METRIC_LABELS = {
-    "total": "Total",
-    "auto": "Auto + Composer",
-    "api": "API",
+    "total": "Cursor Models",
+    "auto": "Cursor Models",
+    "api": "Other Models",
     "worst": "Worst",
     "pace": "Today's pace",
 }
@@ -179,7 +179,7 @@ class SettingsWindow(tk.Toplevel):
         )
         for attr, label in (
             ("show_header", "Show header"),
-            ("show_total", "Total"),
+            ("show_total", "Cursor Models"),
             ("show_pace", "Today's pace"),
             ("show_reset_countdown", "Reset countdown"),
             ("show_stale_badge", "Stale-data badge"),

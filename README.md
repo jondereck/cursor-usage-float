@@ -2,9 +2,8 @@
 
 Small **always-on-top** floating window for Windows that shows your Cursor plan usage:
 
-- **Total** %
-- **Auto + Composer** %
-- **API** %
+- **Cursor Models** % (Grok / Composer)
+- **Other Models** %
 - **Today's pace / soft-stop** — equal daily budget that automatically
   rebalances so usage lasts to the end of the billing cycle
 
@@ -93,7 +92,7 @@ Progress bars shift color by urgency: calm under 70%, warn 70–90%, critical at
 
 | Group | Options |
 |--------|---------|
-| **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, **Total** on/off, **Today's pace** on/off, reset countdown, stale badge |
+| **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, **Cursor Models** on/off, **Today's pace** on/off, reset countdown, stale badge |
 | **Behavior** | Always on top, click-through |
 | **Sync** | Shared folder for pace + settings, colored backup state, and last successful shared-folder write time |
 | **Startup** | Start with Windows (HKCU `Run` key `CursorUsageFloat`), Open hidden (pill) |

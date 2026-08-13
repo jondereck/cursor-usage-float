@@ -29,7 +29,7 @@ from settings import (
     effective_click_through,
     effective_pill_metric,
     ensure_usage_section_visible,
-    format_percent,
+    format_usage_percent,
     load_settings,
     resolve_minimized_percent,
     save_settings,
@@ -59,6 +59,7 @@ from theme import (
 )
 from win_app_icon import apply_tk_icon, set_app_user_model_id
 from win_clickthrough import set_click_through, set_rounded_corners, toplevel_hwnd
+from win_taskbar import TaskbarProxy
 from win_hotkey import GlobalHotkey
 from win_startup import set_start_with_windows
 
@@ -179,7 +180,7 @@ class ProgressRow(tk.Frame):
         self._value = max(0.0, min(100.0, float(value)))
         tip = bar_color_for_percent(self._value)
         self.pct_label.configure(
-            text=format_percent(self._value),
+            text=format_usage_percent(self._value),
             fg=tip if self._value >= 40.0 else TEXT,
         )
         self._redraw_bar()
@@ -278,10 +279,18 @@ class UsageFloater(tk.Tk):
         self._settings_open = False
         self._settings_win: SettingsWindow | None = None
         self._click_through_hotkey: GlobalHotkey | None = None
+        self._taskbar: TaskbarProxy | None = None
 
         self.attributes("-topmost", bool(self.settings.always_on_top))
 
         self._build_ui()
+        self._taskbar = TaskbarProxy(
+            self,
+            title="Cursor Usage",
+            on_restore=self._restore_from_taskbar,
+            on_close=self.destroy,
+            icon_path=APP_ICON,
+        )
         self._apply_settings_side_effects()
         self._apply_layout(animate=False)
         self._place_top_right()
@@ -351,7 +360,7 @@ class UsageFloater(tk.Tk):
         )
         self._header_btn("−", self._toggle_minimized).pack(side="right", padx=(0, 2))
 
-        self.total_row = ProgressRow(self.expanded, "Total", hero=True)
+        self.total_row = ProgressRow(self.expanded, "Cursor Models", hero=True)
         self.total_row.configure(bg=CARD)
         self.total_row.pack(fill="x", pady=(14, 0))
 
@@ -424,13 +433,12 @@ class UsageFloater(tk.Tk):
         self.detail = tk.Frame(self.expanded, bg=CARD)
         self.detail.pack(fill="x", pady=(14, 0))
 
-        self.auto_row = ProgressRow(self.detail, "Auto + Composer", compact=True)
+        self.auto_row = ProgressRow(self.detail, "Cursor Models", compact=True)
         self.auto_row.configure(bg=CARD)
-        self.auto_row.pack(fill="x")
 
-        self.api_row = ProgressRow(self.detail, "API", compact=True)
+        self.api_row = ProgressRow(self.detail, "Other Models", compact=True)
         self.api_row.configure(bg=CARD)
-        self.api_row.pack(fill="x", pady=(10, 0))
+        self.api_row.pack(fill="x")
 
         self.reset_label = tk.Label(
             self.expanded,
@@ -625,6 +633,9 @@ class UsageFloater(tk.Tk):
         if self._click_through_hotkey is not None:
             self._click_through_hotkey.unregister()
             self._click_through_hotkey = None
+        if self._taskbar is not None:
+            self._taskbar.destroy()
+            self._taskbar = None
         super().destroy()
 
     def _toggle_minimized(self) -> None:
@@ -637,6 +648,23 @@ class UsageFloater(tk.Tk):
             self._force_expanded = False
             self._minimized = not self._minimized
         self._apply_layout(animate=True)
+
+    def _restore_from_taskbar(self) -> None:
+        """Taskbar click: keep the float visible and expand it."""
+        self._expand_from_pill()
+        try:
+            self.lift()
+            self.focus_force()
+        except tk.TclError:
+            pass
+
+    def _sync_taskbar_button(self) -> None:
+        if self._taskbar is None:
+            return
+        if self._show_pill_mode():
+            self._taskbar.show()
+        else:
+            self._taskbar.hide()
 
     def _collapse_to_pill(self) -> None:
         if self._animating or self._show_pill_mode():
@@ -680,6 +708,7 @@ class UsageFloater(tk.Tk):
             self._resize_to_content(pin_right=True)
             self._was_pill = want_pill
             self._set_alpha(1.0)
+            self._sync_taskbar_button()
             return
 
         # Alpha crossfade beats size-morph on Windows (no SetWindowRgn stutter).
@@ -697,6 +726,7 @@ class UsageFloater(tk.Tk):
             self._apply_rounded_corners(end_w, end_h)
             self._paint_status()
             self._update_pill_percent()
+            self._sync_taskbar_button()
             self._fade_alpha(0.0, 1.0, FADE_IN_MS, on_done=self._clear_animating)
 
         self._fade_alpha(1.0, 0.0, FADE_OUT_MS, on_done=after_fade_out)
@@ -864,7 +894,7 @@ class UsageFloater(tk.Tk):
             return
 
         value = resolve_minimized_percent(self._last_usage, metric)
-        self.pill_pct.configure(text=format_percent(value), fg=TEXT)
+        self.pill_pct.configure(text=format_usage_percent(value), fg=TEXT)
         extent = -max(1.0, min(359.9, value / 100.0 * 359.9))
         color = bar_color_for_percent(value)
         self.pill_canvas.itemconfigure(self._pill_arc, extent=extent, outline=color)
@@ -1098,11 +1128,8 @@ class UsageFloater(tk.Tk):
         self._last_usage = usage
         self._connection_ok = True
         self._last_success_at = datetime.now()
-        self.total_row.set_percent(usage.total_percent)
-        # Short summary only — no long policy blurbs
-        self.total_row.set_subtext(
-            f"{format_percent(usage.auto_percent)} Auto · {format_percent(usage.api_percent)} API"
-        )
+        self.total_row.set_percent(usage.auto_percent)
+        self.total_row.set_subtext("Includes Grok and Composer")
         self.auto_row.set_percent(usage.auto_percent)
         self.api_row.set_percent(usage.api_percent)
         self._update_pace_from_usage(usage)
@@ -1245,6 +1272,7 @@ def main() -> None:
     app.after(100, app._apply_settings_side_effects)
     # Re-apply icon after the HWND is fully realized (taskbar / alt-tab).
     app.after(100, lambda: apply_tk_icon(app, APP_ICON))
+    app.after(150, app._sync_taskbar_button)
     app.mainloop()
 
 

@@ -120,7 +120,8 @@ def test_budget_from_plan_prefers_percent() -> None:
         PlanUsage(total_percent=30.0, auto_percent=10.0, api_percent=20.0)
     )
     assert pct.unit == "percent"
-    assert pct.remaining == 70.0
+    assert pct.used == 20.0
+    assert pct.remaining == 80.0
 
     # Percent wins even when cents are present (clearer pace UI)
     mixed = budget_from_plan(
@@ -133,4 +134,5 @@ def test_budget_from_plan_prefers_percent() -> None:
         )
     )
     assert mixed.unit == "percent"
-    assert mixed.remaining == 70.0
+    assert mixed.used == 20.0
+    assert mixed.remaining == 80.0

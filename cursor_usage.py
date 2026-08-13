@@ -49,11 +49,13 @@ def budget_from_plan(usage: PlanUsage) -> UsageBudget:
     """
     Normalize used/remaining for pacing.
 
-    Prefer plan percent (matches the Total bar). Fall back to spend/limit cents
-    only when percent data is missing.
+    Prefer the higher of Cursor Models (auto) and Other Models (api) so pace
+    matches the dashboard pools. Fall back to spend/limit cents only when
+    percent data is missing.
     """
-    if usage.total_percent is not None and usage.total_percent >= 0:
-        used = float(max(0.0, min(100.0, usage.total_percent)))
+    used_pct = max(float(usage.auto_percent), float(usage.api_percent))
+    if used_pct >= 0:
+        used = float(max(0.0, min(100.0, used_pct)))
         return UsageBudget(
             used=used,
             limit=100.0,

@@ -178,15 +178,21 @@ def resolve_minimized_percent(usage: PlanUsage, metric: str) -> float:
     if metric == "api":
         return usage.api_percent
     if metric == "worst":
-        return max(usage.total_percent, usage.auto_percent, usage.api_percent)
-    # "pace" is rendered separately in the pill; fall back to total for ring %
-    return usage.total_percent
+        return max(usage.auto_percent, usage.api_percent)
+    # "total" and "pace" fallback: Cursor Models pool (dashboard primary bar)
+    return usage.auto_percent
 
 
 def format_percent(value: float) -> str:
     """Always show one decimal place (e.g. 42.9%)."""
     value = max(0.0, min(100.0, float(value)))
     return f"{value:.1f}%"
+
+
+def format_usage_percent(value: float) -> str:
+    """Whole percent, matching Cursor's dashboard (10.6 → 11%)."""
+    value = max(0.0, min(100.0, float(value)))
+    return f"{int(value + 0.5)}%"
 
 
 def effective_click_through(click_through: bool, settings_open: bool) -> bool:

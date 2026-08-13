@@ -97,7 +97,7 @@ def test_invalid_enum_falls_back(tmp_path: Path) -> None:
 
 def test_resolve_minimized_percent_modes() -> None:
     usage = _usage(total=10.0, auto=40.0, api=25.0)
-    assert resolve_minimized_percent(usage, "total") == 10.0
+    assert resolve_minimized_percent(usage, "total") == 40.0
     assert resolve_minimized_percent(usage, "auto") == 40.0
     assert resolve_minimized_percent(usage, "api") == 25.0
     assert resolve_minimized_percent(usage, "worst") == 40.0
