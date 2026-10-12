@@ -2,7 +2,10 @@
 
 Small **always-on-top** floating window for Windows that shows your Cursor plan usage:
 
-- **Cursor Models** % (Grok / Composer)
+- **Cursor Models** % (Composer / Cursor Grok models)
+- **Grok Bot** weekly % (separate allowance; Settings on/off)
+- Minimized **pill** shows Cursor Models + Grok Bot side-by-side (icon + %)
+  when Grok Bot is available
 - **Other Models** %
 - **Today's pace / soft-stop** — equal daily budget that automatically
   rebalances so usage lasts to the end of the billing cycle
@@ -40,8 +43,9 @@ Notes: first launch is a bit slower (the onefile bundle self-extracts), some ant
 
 1. Reads your Cursor access token from the local SQLite DB:  
    `%APPDATA%\Cursor\User\globalStorage\state.vscdb`
-2. Calls Cursor’s HTTPS usage endpoint only:  
-   `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`
+2. Calls Cursor’s HTTPS usage endpoints:  
+   `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`  
+   and (best-effort) `…/GetSandUsageStatus` for **Grok Bot** weekly usage.
 3. Draws the progress bars and refreshes about every **3 minutes** (↻ for manual refresh).
 4. Splits the start-of-day remaining allowance equally across the calendar
    days through reset. Under-use carries forward and raises later daily
@@ -92,7 +96,7 @@ Progress bars shift color by urgency: calm under 70%, warn 70–90%, critical at
 
 | Group | Options |
 |--------|---------|
-| **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, **Cursor Models** on/off, **Today's pace** on/off, reset countdown, stale badge |
+| **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, **Cursor Models** on/off, **Today's pace** on/off, **Grok Bot** on/off, reset countdown, stale badge |
 | **Behavior** | Always on top, click-through |
 | **Sync** | Shared folder for pace + settings, colored backup state, and last successful shared-folder write time |
 | **Startup** | Start with Windows (HKCU `Run` key `CursorUsageFloat`), Open hidden (pill) |

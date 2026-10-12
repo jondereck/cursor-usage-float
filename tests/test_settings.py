@@ -33,6 +33,19 @@ def test_load_defaults_when_file_missing(tmp_path: Path) -> None:
     path = tmp_path / "missing.json"
     settings = load_settings(path)
     assert settings == AppSettings()
+    assert settings.show_grok_bot is True
+
+
+def test_show_grok_bot_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    save_settings(AppSettings(show_grok_bot=False), path)
+    assert load_settings(path).show_grok_bot is False
+
+
+def test_legacy_settings_default_show_grok_bot(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"show_total": True}), encoding="utf-8")
+    assert load_settings(path).show_grok_bot is True
 
 
 def test_round_trip_save_load(tmp_path: Path) -> None:
@@ -171,6 +184,22 @@ def test_effective_pill_metric() -> None:
     assert (
         effective_pill_metric(AppSettings(minimized_metric="auto", show_total=True))
         == "auto"
+    )
+    assert (
+        effective_pill_metric(
+            AppSettings(minimized_metric="grok", show_grok_bot=True)
+        )
+        == "grok"
+    )
+    assert (
+        effective_pill_metric(
+            AppSettings(
+                minimized_metric="grok",
+                show_grok_bot=False,
+                show_pace=True,
+            )
+        )
+        == "pace"
     )
 
 

@@ -8,11 +8,11 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
 
-from cursor_usage import PlanUsage
+from cursor_usage import GrokBotUsage, PlanUsage
 from sync_status import record_sync_error, record_sync_success
 
 DENSITY_OPTIONS = ("full", "compact", "minimal")
-METRIC_OPTIONS = ("total", "auto", "api", "worst", "pace")
+METRIC_OPTIONS = ("total", "auto", "api", "worst", "pace", "grok")
 
 
 @dataclass
@@ -25,7 +25,8 @@ class AppSettings:
     show_stale_badge: bool = True
     show_total: bool = True
     show_pace: bool = True
-    minimized_metric: str = "pace"  # total | auto | api | worst | pace
+    show_grok_bot: bool = True
+    minimized_metric: str = "pace"  # total | auto | api | worst | pace | grok
     start_minimized: bool = False  # open hidden (pill) on launch
     start_with_windows: bool = False
     # Shared folder for pace-history.json + settings.json (e.g. Google Drive).
@@ -77,8 +78,10 @@ def ensure_usage_section_visible(settings: AppSettings) -> AppSettings:
         settings.show_total = True
     if settings.minimized_metric == "pace" and not settings.show_pace:
         settings.minimized_metric = "total"
+    elif settings.minimized_metric == "grok" and not settings.show_grok_bot:
+        settings.minimized_metric = "total" if settings.show_total else "pace"
     elif (
-        settings.minimized_metric != "pace"
+        settings.minimized_metric not in ("pace", "grok")
         and not settings.show_total
         and settings.show_pace
     ):
@@ -90,6 +93,12 @@ def effective_pill_metric(settings: AppSettings) -> str:
     """Pill metric respecting which usage sections are enabled."""
     metric = settings.minimized_metric
     if metric == "pace":
+        if settings.show_pace:
+            return "pace"
+        return "total"
+    if metric == "grok":
+        if settings.show_grok_bot:
+            return "grok"
         if settings.show_pace:
             return "pace"
         return "total"
@@ -172,13 +181,21 @@ def seed_settings_if_needed(source: Path, destination: Path) -> bool:
     return True
 
 
-def resolve_minimized_percent(usage: PlanUsage, metric: str) -> float:
+def resolve_minimized_percent(
+    usage: PlanUsage,
+    metric: str,
+    grok: GrokBotUsage | None = None,
+) -> float:
     if metric == "auto":
         return usage.auto_percent
     if metric == "api":
         return usage.api_percent
     if metric == "worst":
         return max(usage.auto_percent, usage.api_percent)
+    if metric == "grok":
+        if grok is not None and grok.is_eligible:
+            return grok.usage_percent
+        return usage.auto_percent
     # "total" and "pace" fallback: Cursor Models pool (dashboard primary bar)
     return usage.auto_percent
 

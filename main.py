@@ -9,7 +9,14 @@ from pathlib import Path
 from tkinter import font as tkfont
 
 from cursor_auth import AuthError
-from cursor_usage import PlanUsage, UsageError, budget_from_plan, fetch_current_period_usage
+from cursor_usage import (
+    GrokBotUsage,
+    PlanUsage,
+    UsageError,
+    budget_from_plan,
+    fetch_current_period_usage,
+    fetch_grok_bot_usage,
+)
 from paths import resource_path
 from pace_history import (
     active_pace_history_path,
@@ -98,7 +105,13 @@ PILL_GAP = 6
 PILL_RING = 20
 PILL_BORDER_PX = 2
 PILL_NUM_FONT = ("Segoe UI", 11, "bold")
+PILL_DUAL_NUM_FONT = ("Segoe UI", 10, "bold")
 PILL_BADGE_FONT = ("Segoe UI", 8, "bold")
+PILL_DUAL_PAD_X = 10
+PILL_DUAL_ITEM_GAP = 5
+PILL_DUAL_SECTION_GAP = 8
+PILL_DUAL_DIVIDER_H = 16
+PILL_ICON = 20
 CORNER_RADIUS = 18
 PILL_CORNER_RADIUS = 22  # unused in pill mode; radius = height
 GEAR_ICON = "\uE713"
@@ -296,6 +309,7 @@ class UsageFloater(tk.Tk):
         self._connection_ok: bool | None = None
         self._last_success_at: datetime | None = None
         self._last_usage: PlanUsage | None = None
+        self._last_grok_bot: GrokBotUsage | None = None
         self._last_pace: PaceResult | None = None
         self._window_state = load_window_state()
         if self._window_state is not None:
@@ -417,6 +431,10 @@ class UsageFloater(tk.Tk):
         self.total_row = ProgressRow(self.expanded, "Cursor Models", hero=True)
         self.total_row.configure(bg=CARD)
         self.total_row.pack(fill="x", pady=(14, 0))
+
+        self.grok_bot_row = ProgressRow(self.expanded, "Grok Bot", hero=True)
+        self.grok_bot_row.configure(bg=CARD)
+        # Packed only when show_grok_bot and fetch is eligible.
 
         # Daily pace / soft-stop (hero visual)
         self.pace_panel = tk.Frame(self.expanded, bg=CARD)
@@ -542,7 +560,10 @@ class UsageFloater(tk.Tk):
         self.pill.pack_propagate(True)
         self._pill_border_color = CARD
         self._pill_view: dict[str, object] = {
+            "layout": "ring",  # ring | dual
             "text": "—%",
+            "cursor_text": "—%",
+            "grok_text": "—%",
             "number_color": TEXT,
             "ring_color": BAR_BG,
             "ring_extent": 0.0,
@@ -553,6 +574,18 @@ class UsageFloater(tk.Tk):
             "show_badge": False,
             "cue": "",
         }
+        self._pill_icon_cursor: tk.PhotoImage | None = None
+        self._pill_icon_grok: tk.PhotoImage | None = None
+        try:
+            self._pill_icon_cursor = tk.PhotoImage(
+                file=str(resource_path("assets", "cursor-mark.png"))
+            )
+            self._pill_icon_grok = tk.PhotoImage(
+                file=str(resource_path("assets", "grok-mark.png"))
+            )
+        except tk.TclError:
+            self._pill_icon_cursor = None
+            self._pill_icon_grok = None
         self.pill_face.bind("<Configure>", self._on_pill_configure)
         self.pill_face.bind("<ButtonPress-1>", self._start_drag)
         self.pill_face.bind("<B1-Motion>", self._on_drag)
@@ -828,6 +861,7 @@ class UsageFloater(tk.Tk):
         for child in (
             self.header,
             self.total_row,
+            self.grok_bot_row,
             self.pace_panel,
             self.detail,
             self.reset_label,
@@ -847,6 +881,13 @@ class UsageFloater(tk.Tk):
             self.total_row.pack(
                 fill="x",
                 pady=(14 if self.settings.show_header or first_section else 0, 0),
+            )
+            first_section = False
+
+        if self._grok_bot_should_show():
+            self.grok_bot_row.pack(
+                fill="x",
+                pady=(12 if not first_section else (14 if self.settings.show_header else 0), 0),
             )
             first_section = False
 
@@ -870,8 +911,16 @@ class UsageFloater(tk.Tk):
         self._update_reset_countdown()
         self._update_stale_badge()
 
+    def _grok_bot_should_show(self) -> bool:
+        return (
+            bool(self.settings.show_grok_bot)
+            and self._last_grok_bot is not None
+            and self._last_grok_bot.is_eligible
+            and not self._show_pill_mode()
+        )
+
     def _update_section_visibility(self) -> None:
-        """Apply Total / Today's pace on-off without full chrome rebuild."""
+        """Apply Total / Grok Bot / Today's pace on-off without full chrome rebuild."""
         if self._show_pill_mode():
             return
         if self.settings.show_total:
@@ -879,7 +928,23 @@ class UsageFloater(tk.Tk):
                 self.total_row.pack(fill="x", pady=(14, 0), after=self.header)
         else:
             self.total_row.pack_forget()
+        self._update_grok_bot_visibility()
         self._update_pace_visibility()
+
+    def _update_grok_bot_visibility(self) -> None:
+        if not hasattr(self, "grok_bot_row"):
+            return
+        show = self._grok_bot_should_show()
+        if show:
+            if not self.grok_bot_row.winfo_ismapped():
+                if self.total_row.winfo_ismapped():
+                    self.grok_bot_row.pack(fill="x", pady=(12, 0), after=self.total_row)
+                elif self.header.winfo_ismapped():
+                    self.grok_bot_row.pack(fill="x", pady=(14, 0), after=self.header)
+                else:
+                    self.grok_bot_row.pack(fill="x", pady=(0, 0))
+        else:
+            self.grok_bot_row.pack_forget()
 
     def _update_pace_visibility(self) -> None:
         if not hasattr(self, "pace_panel"):
@@ -887,7 +952,9 @@ class UsageFloater(tk.Tk):
         show = bool(self.settings.show_pace) and not self._show_pill_mode()
         if show:
             if not self.pace_panel.winfo_ismapped():
-                if self.total_row.winfo_ismapped():
+                if self.grok_bot_row.winfo_ismapped():
+                    self.pace_panel.pack(fill="x", pady=(12, 0), after=self.grok_bot_row)
+                elif self.total_row.winfo_ismapped():
                     self.pace_panel.pack(fill="x", pady=(12, 0), after=self.total_row)
                 elif self.header.winfo_ismapped():
                     self.pace_panel.pack(fill="x", pady=(14, 0), after=self.header)
@@ -990,9 +1057,47 @@ class UsageFloater(tk.Tk):
         canvas.create_line(x1 + r, y1, x2 - r, y1, fill=color, width=width, tags=tag)
         canvas.create_line(x1 + r, y2, x2 - r, y2, fill=color, width=width, tags=tag)
 
+    def _pill_dual_mode(self) -> bool:
+        """Icon + % | icon + % layout when Grok Bot weekly usage is available."""
+        return (
+            bool(self.settings.show_grok_bot)
+            and self._last_usage is not None
+            and self._last_grok_bot is not None
+            and self._last_grok_bot.is_eligible
+        )
+
     def _pill_metrics(self) -> tuple[int, int, int, int]:
         """Return (width, height, text_w, badge_w) for compact capsule."""
         view = self._pill_view
+        if view.get("layout") == "dual":
+            font_nums = tkfont.Font(
+                family=PILL_DUAL_NUM_FONT[0],
+                size=PILL_DUAL_NUM_FONT[1],
+                weight="bold",
+            )
+            cursor_w = font_nums.measure(str(view.get("cursor_text") or "—%"))
+            grok_w = font_nums.measure(str(view.get("grok_text") or "—%"))
+            cue_w = 0
+            cue = str(view.get("cue") or "")
+            if cue:
+                font_cue = tkfont.Font(family="Segoe UI", size=7, weight="bold")
+                cue_w = font_cue.measure(cue) + PILL_DUAL_SECTION_GAP
+            width = (
+                PILL_DUAL_PAD_X
+                + PILL_ICON
+                + PILL_DUAL_ITEM_GAP
+                + cursor_w
+                + PILL_DUAL_SECTION_GAP
+                + 1  # divider
+                + PILL_DUAL_SECTION_GAP
+                + PILL_ICON
+                + PILL_DUAL_ITEM_GAP
+                + grok_w
+                + cue_w
+                + PILL_DUAL_PAD_X
+            )
+            return max(width, PILL_HEIGHT), PILL_HEIGHT, cursor_w + grok_w, 0
+
         text = str(view.get("text") or "—%")
         font_nums = tkfont.Font(family=PILL_NUM_FONT[0], size=PILL_NUM_FONT[1], weight="bold")
         font_badge = tkfont.Font(family=PILL_BADGE_FONT[0], size=PILL_BADGE_FONT[1], weight="bold")
@@ -1060,9 +1165,108 @@ class UsageFloater(tk.Tk):
         else:
             self._draw_capsule(c, 0, 0, x2, y2, CARD)
 
-        # Ring + center dot
-        cx = PILL_PAD_L + PILL_RING / 2
         cy = h / 2
+        if view.get("layout") == "dual":
+            self._redraw_pill_dual(c, w, h, cy)
+        else:
+            self._redraw_pill_ring(c, h, cy, badge_w)
+
+        # Re-assert color-key after geometry (click-through / layout can clear it).
+        try:
+            hwnd = toplevel_hwnd(self)
+            clear_window_region(hwnd)
+            set_color_key(hwnd, TRANSPARENT_KEY)
+        except Exception:
+            pass
+
+    def _redraw_pill_dual(
+        self, c: tk.Canvas, w: int, h: int, cy: float
+    ) -> None:
+        """Icon+% | Icon+% — matches the compact HTML usage pill."""
+        view = self._pill_view
+        font_nums = tkfont.Font(
+            family=PILL_DUAL_NUM_FONT[0],
+            size=PILL_DUAL_NUM_FONT[1],
+            weight="bold",
+        )
+        x = float(PILL_DUAL_PAD_X)
+        color = str(view.get("number_color") or TEXT)
+
+        # Cursor Models
+        if self._pill_icon_cursor is not None:
+            c.create_image(
+                x + PILL_ICON / 2,
+                cy,
+                image=self._pill_icon_cursor,
+                anchor="center",
+                tags="face",
+            )
+        x += PILL_ICON + PILL_DUAL_ITEM_GAP
+        cursor_text = str(view.get("cursor_text") or "—%")
+        c.create_text(
+            x,
+            cy,
+            text=cursor_text,
+            fill=color,
+            font=PILL_DUAL_NUM_FONT,
+            anchor="w",
+            tags="face",
+        )
+        x += font_nums.measure(cursor_text) + PILL_DUAL_SECTION_GAP
+
+        # Divider
+        c.create_line(
+            x,
+            cy - PILL_DUAL_DIVIDER_H / 2,
+            x,
+            cy + PILL_DUAL_DIVIDER_H / 2,
+            fill=BORDER,
+            width=1,
+            tags="face",
+        )
+        x += 1 + PILL_DUAL_SECTION_GAP
+
+        # Grok Bot
+        if self._pill_icon_grok is not None:
+            c.create_image(
+                x + PILL_ICON / 2,
+                cy,
+                image=self._pill_icon_grok,
+                anchor="center",
+                tags="face",
+            )
+        x += PILL_ICON + PILL_DUAL_ITEM_GAP
+        grok_text = str(view.get("grok_text") or "—%")
+        c.create_text(
+            x,
+            cy,
+            text=grok_text,
+            fill=color,
+            font=PILL_DUAL_NUM_FONT,
+            anchor="w",
+            tags="face",
+        )
+        x += font_nums.measure(grok_text)
+
+        cue = str(view.get("cue") or "")
+        if cue:
+            x += PILL_DUAL_SECTION_GAP
+            c.create_text(
+                x,
+                cy,
+                text=cue,
+                fill=DOT_ERR,
+                font=("Segoe UI", 7, "bold"),
+                anchor="w",
+                tags="face",
+            )
+
+    def _redraw_pill_ring(
+        self, c: tk.Canvas, h: int, cy: float, badge_w: int
+    ) -> None:
+        """Legacy single-metric ring + percent (+ optional pace badge)."""
+        view = self._pill_view
+        cx = PILL_PAD_L + PILL_RING / 2
         r_out = PILL_RING / 2 - 2
         c.create_arc(
             cx - r_out, cy - r_out, cx + r_out, cy + r_out,
@@ -1082,7 +1286,6 @@ class UsageFloater(tk.Tk):
             fill=str(view.get("dot_color") or DOT_UNKNOWN), outline="", tags="face",
         )
 
-        # Numbers
         x = PILL_PAD_L + PILL_RING + PILL_GAP
         c.create_text(
             x, cy,
@@ -1095,7 +1298,6 @@ class UsageFloater(tk.Tk):
         font_nums = tkfont.Font(family=PILL_NUM_FONT[0], size=PILL_NUM_FONT[1], weight="bold")
         x += font_nums.measure(str(view.get("text") or "—%"))
 
-        # WARN/STOP chip
         if view.get("show_badge") and badge_w:
             x += PILL_GAP
             bh = 18
@@ -1129,14 +1331,6 @@ class UsageFloater(tk.Tk):
                 tags="face",
             )
 
-        # Re-assert color-key after geometry (click-through / layout can clear it).
-        try:
-            hwnd = toplevel_hwnd(self)
-            clear_window_region(hwnd)
-            set_color_key(hwnd, TRANSPARENT_KEY)
-        except Exception:
-            pass
-
     def _apply_pill_border(self, border: str) -> None:
         """OK = seamless cream; WARN/STOP = even capsule border."""
         self._pill_border_color = border
@@ -1167,7 +1361,28 @@ class UsageFloater(tk.Tk):
         if self._last_usage is None:
             view.update(
                 {
+                    "layout": "ring",
                     "text": "—%",
+                    "cursor_text": "—%",
+                    "grok_text": "—%",
+                    "number_color": TEXT,
+                    "ring_extent": 0.0,
+                    "show_badge": False,
+                    "badge_text": "",
+                }
+            )
+            self._apply_pill_border(CARD)
+            return
+
+        # Prefer compact dual icon+% | icon+% when Grok Bot is available.
+        if self._pill_dual_mode():
+            assert self._last_grok_bot is not None
+            view.update(
+                {
+                    "layout": "dual",
+                    "cursor_text": format_usage_percent(self._last_usage.auto_percent),
+                    "grok_text": format_usage_percent(self._last_grok_bot.usage_percent),
+                    "text": format_usage_percent(self._last_usage.auto_percent),
                     "number_color": TEXT,
                     "ring_extent": 0.0,
                     "show_badge": False,
@@ -1190,6 +1405,7 @@ class UsageFloater(tk.Tk):
             extent = -max(1.0, min(359.9, min(pct, 100.0) / 100.0 * 359.9))
             view.update(
                 {
+                    "layout": "ring",
                     "text": chrome.text,
                     "number_color": chrome.number_color,
                     "ring_color": chrome.ring_color,
@@ -1206,6 +1422,7 @@ class UsageFloater(tk.Tk):
         if metric == "pace":
             view.update(
                 {
+                    "layout": "ring",
                     "text": "—%",
                     "number_color": TEXT,
                     "ring_extent": 0.0,
@@ -1215,10 +1432,13 @@ class UsageFloater(tk.Tk):
             self._apply_pill_border(CARD)
             return
 
-        value = resolve_minimized_percent(self._last_usage, metric)
+        value = resolve_minimized_percent(
+            self._last_usage, metric, grok=self._last_grok_bot
+        )
         extent = -max(1.0, min(359.9, value / 100.0 * 359.9))
         view.update(
             {
+                "layout": "ring",
                 "text": format_usage_percent(value),
                 "number_color": TEXT,
                 "ring_color": bar_color_for_percent(value),
@@ -1516,7 +1736,21 @@ class UsageFloater(tk.Tk):
         def worker() -> None:
             try:
                 usage = fetch_current_period_usage()
-                self.after(0, lambda: self._apply_usage(usage))
+                grok: GrokBotUsage | None = None
+                grok_ok = False
+                try:
+                    grok = fetch_grok_bot_usage()
+                    grok_ok = True
+                except (AuthError, UsageError):
+                    pass
+                except Exception:  # noqa: BLE001
+                    pass
+                self.after(
+                    0,
+                    lambda u=usage, g=grok, ok=grok_ok: self._apply_usage(
+                        u, grok=g, grok_updated=ok
+                    ),
+                )
             except (AuthError, UsageError) as exc:
                 msg = str(exc)
                 self.after(0, lambda: self._apply_error(msg))
@@ -1533,14 +1767,22 @@ class UsageFloater(tk.Tk):
         self._stop_pulse()
         self._paint_status()
 
-    def _apply_usage(self, usage: PlanUsage) -> None:
+    def _apply_usage(
+        self,
+        usage: PlanUsage,
+        grok: GrokBotUsage | None = None,
+        grok_updated: bool = True,
+    ) -> None:
         self._last_usage = usage
+        if grok_updated:
+            self._last_grok_bot = grok
         self._connection_ok = True
         self._last_success_at = datetime.now()
         self.total_row.set_percent(usage.auto_percent)
-        self.total_row.set_subtext("Includes Grok and Composer")
+        self.total_row.set_subtext("Includes Composer and Cursor Grok models")
         self.auto_row.set_percent(usage.auto_percent)
         self.api_row.set_percent(usage.api_percent)
+        self._apply_grok_bot(self._last_grok_bot)
         self._update_pace_from_usage(usage)
         self._paint_status()
         self._update_pill_percent()
@@ -1551,6 +1793,12 @@ class UsageFloater(tk.Tk):
             self._update_stale_badge()
             self._update_section_visibility()
         self._resize_to_content()
+
+    def _apply_grok_bot(self, grok: GrokBotUsage | None) -> None:
+        if grok is None or not grok.is_eligible:
+            return
+        self.grok_bot_row.set_percent(grok.usage_percent)
+        self.grok_bot_row.set_subtext(_format_grok_bot_subtext(grok))
 
     def _pace_history_path(self) -> Path:
         return active_pace_history_path(self.settings.pace_sync_folder)
@@ -1667,6 +1915,30 @@ def _parse_billing_end(raw: str) -> datetime | None:
         return datetime.fromtimestamp(num, tz=timezone.utc)
     except (TypeError, ValueError, OSError):
         return None
+
+
+def _format_grok_bot_subtext(grok: GrokBotUsage) -> str:
+    """Weekly allowance label, with optional resets-in hint."""
+    base = "Weekly allowance"
+    if not grok.next_reset:
+        return base
+    end = _parse_billing_end(str(grok.next_reset).strip())
+    if end is None:
+        return base
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    delta = end - now
+    if delta.total_seconds() <= 0:
+        return f"{base} · resets soon"
+    days = delta.days
+    hours = delta.seconds // 3600
+    if days >= 1:
+        return f"{base} · resets in {days}d"
+    if hours >= 1:
+        return f"{base} · resets in {hours}h"
+    minutes = max(1, delta.seconds // 60)
+    return f"{base} · resets in {minutes}m"
 
 
 def main() -> None:

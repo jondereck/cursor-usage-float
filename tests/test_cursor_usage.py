@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from cursor_usage import PlanUsage, budget_from_plan, parse_plan_usage
+import pytest
+
+from cursor_usage import (
+    GrokBotUsage,
+    PlanUsage,
+    UsageError,
+    budget_from_plan,
+    parse_grok_bot_usage,
+    parse_plan_usage,
+)
 from settings import format_usage_percent, resolve_minimized_percent
 
 
@@ -50,3 +59,54 @@ def test_pill_total_metric_uses_cursor_models() -> None:
     assert resolve_minimized_percent(usage, "total") == 10.6
     assert resolve_minimized_percent(usage, "auto") == 10.6
     assert resolve_minimized_percent(usage, "api") == 0.0
+
+
+def test_parse_grok_bot_usage_reads_weekly_percent() -> None:
+    usage = parse_grok_bot_usage(
+        {
+            "usagePercent": 23.4,
+            "hasNonZeroIncludedLimit": True,
+            "usesPooledEnterpriseAllowance": False,
+            "nextResetTimestampUtc": "2026-10-19T00:00:00.000Z",
+        }
+    )
+    assert usage.usage_percent == 23.4
+    assert usage.is_eligible is True
+    assert usage.next_reset == "2026-10-19T00:00:00.000Z"
+
+
+def test_grok_bot_ineligible_without_included_limit() -> None:
+    usage = parse_grok_bot_usage(
+        {
+            "usagePercent": 0.0,
+            "hasNonZeroIncludedLimit": False,
+            "usesPooledEnterpriseAllowance": False,
+        }
+    )
+    assert usage.is_eligible is False
+
+
+def test_grok_bot_ineligible_pooled_enterprise() -> None:
+    usage = parse_grok_bot_usage(
+        {
+            "usagePercent": 10.0,
+            "hasNonZeroIncludedLimit": True,
+            "usesPooledEnterpriseAllowance": True,
+        }
+    )
+    assert usage.is_eligible is False
+
+
+def test_grok_bot_missing_usage_percent_raises() -> None:
+    with pytest.raises(UsageError):
+        parse_grok_bot_usage({"hasNonZeroIncludedLimit": True})
+
+
+def test_pill_grok_metric_uses_grok_bot_percent() -> None:
+    usage = PlanUsage(total_percent=9.2, auto_percent=10.6, api_percent=0.0)
+    grok = GrokBotUsage(
+        usage_percent=42.0,
+        has_nonzero_included_limit=True,
+    )
+    assert resolve_minimized_percent(usage, "grok", grok=grok) == 42.0
+    assert resolve_minimized_percent(usage, "grok", grok=None) == 10.6

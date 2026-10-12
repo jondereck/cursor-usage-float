@@ -41,6 +41,8 @@ echo Building portable exe...
   --name CursorUsageFloat ^
   --icon "assets\app.ico" ^
   --add-data "assets\app.ico;assets" ^
+  --add-data "assets\cursor-mark.png;assets" ^
+  --add-data "assets\grok-mark.png;assets" ^
   main.py
 if errorlevel 1 (
   echo Build failed.

@@ -13,6 +13,8 @@ from cursor_auth import get_access_token
 API_ORIGIN = "https://api2.cursor.sh"
 USAGE_PATH = "/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
 USAGE_URL = f"{API_ORIGIN}{USAGE_PATH}"
+GROK_BOT_PATH = "/aiserver.v1.DashboardService/GetSandUsageStatus"
+GROK_BOT_URL = f"{API_ORIGIN}{GROK_BOT_PATH}"
 
 
 class UsageError(Exception):
@@ -33,6 +35,26 @@ class PlanUsage:
         auto = _fmt_pct(self.auto_percent)
         api = _fmt_pct(self.api_percent)
         return f"{auto}% Auto and {api}% API used"
+
+
+@dataclass(frozen=True)
+class GrokBotUsage:
+    """Grok Bot weekly included-usage pool (separate from Cursor Models)."""
+
+    usage_percent: float
+    next_reset: str | None = None
+    has_nonzero_included_limit: bool = False
+    uses_pooled_enterprise_allowance: bool = False
+    included_limit_zero: bool = False
+
+    @property
+    def is_eligible(self) -> bool:
+        """True when the account has a personal weekly Grok Bot allowance to show."""
+        if self.uses_pooled_enterprise_allowance:
+            return False
+        if self.included_limit_zero:
+            return False
+        return bool(self.has_nonzero_included_limit)
 
 
 @dataclass(frozen=True)
@@ -137,18 +159,61 @@ def parse_plan_usage(payload: dict[str, Any]) -> PlanUsage:
     )
 
 
-def fetch_current_period_usage(token: str | None = None) -> PlanUsage:
-    """
-    POST GetCurrentPeriodUsage using the local Cursor bearer token.
+def _as_optional_bool(data: dict[str, Any], *keys: str) -> bool | None:
+    for key in keys:
+        if key in data and data[key] is not None:
+            value = data[key]
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)) and value in (0, 1):
+                return bool(value)
+            if isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in ("true", "1", "yes"):
+                    return True
+                if lowered in ("false", "0", "no"):
+                    return False
+    return None
 
-    Token is used in-memory only and sent solely to api2.cursor.sh.
-    """
-    access_token = token if token is not None else get_access_token()
 
-    body = b"{}"
+def parse_grok_bot_usage(payload: dict[str, Any]) -> GrokBotUsage:
+    """Parse GetSandUsageStatus JSON into GrokBotUsage."""
+    if not isinstance(payload, dict):
+        raise UsageError("Unexpected Grok Bot usage API response shape.")
+
+    # usagePercent is optional; absent means unreadable / not a zero reading.
+    if "usagePercent" not in payload or payload.get("usagePercent") is None:
+        raise UsageError("Grok Bot usage response missing usagePercent.")
+
+    percent = _as_float(payload, "usagePercent")
+    has_limit = _as_optional_bool(
+        payload, "hasNonZeroIncludedLimit", "has_nonzero_included_limit"
+    )
+    pooled = _as_optional_bool(
+        payload, "usesPooledEnterpriseAllowance", "uses_pooled_enterprise_allowance"
+    )
+    limit_zero = _as_optional_bool(
+        payload, "includedLimitZero", "included_limit_zero"
+    )
+
+    next_reset = payload.get("nextResetTimestampUtc") or payload.get("nextReset")
+    if next_reset is not None:
+        next_reset = str(next_reset)
+
+    return GrokBotUsage(
+        usage_percent=max(0.0, min(100.0, percent)),
+        next_reset=next_reset,
+        has_nonzero_included_limit=bool(has_limit) if has_limit is not None else False,
+        uses_pooled_enterprise_allowance=bool(pooled) if pooled is not None else False,
+        included_limit_zero=bool(limit_zero) if limit_zero is not None else False,
+    )
+
+
+def _post_dashboard_json(url: str, access_token: str) -> dict[str, Any]:
+    """POST empty JSON body to a Cursor DashboardService Connect-RPC endpoint."""
     request = urllib.request.Request(
-        USAGE_URL,
-        data=body,
+        url,
+        data=b"{}",
         method="POST",
         headers={
             "Authorization": f"Bearer {access_token}",
@@ -182,4 +247,24 @@ def fetch_current_period_usage(token: str | None = None) -> PlanUsage:
     if not isinstance(payload, dict):
         raise UsageError("Unexpected usage API response shape.")
 
-    return parse_plan_usage(payload)
+    return payload
+
+
+def fetch_current_period_usage(token: str | None = None) -> PlanUsage:
+    """
+    POST GetCurrentPeriodUsage using the local Cursor bearer token.
+
+    Token is used in-memory only and sent solely to api2.cursor.sh.
+    """
+    access_token = token if token is not None else get_access_token()
+    return parse_plan_usage(_post_dashboard_json(USAGE_URL, access_token))
+
+
+def fetch_grok_bot_usage(token: str | None = None) -> GrokBotUsage:
+    """
+    POST GetSandUsageStatus using the local Cursor bearer token.
+
+    Token is used in-memory only and sent solely to api2.cursor.sh.
+    """
+    access_token = token if token is not None else get_access_token()
+    return parse_grok_bot_usage(_post_dashboard_json(GROK_BOT_URL, access_token))
