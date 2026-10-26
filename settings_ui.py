@@ -48,6 +48,7 @@ METRIC_LABELS = {
     "pace": "Today's pace",
     "grok": "Grok Bot",
     "antigravity": "Antigravity",
+    "codex": "Codex",
 }
 
 
@@ -185,6 +186,7 @@ class SettingsWindow(tk.Toplevel):
             ("show_pace", "Today's pace"),
             ("show_grok_bot", "Grok Bot"),
             ("show_antigravity", "Antigravity"),
+            ("show_codex", "Codex"),
             ("show_reset_countdown", "Reset countdown"),
             ("show_stale_badge", "Stale-data badge"),
         ):
@@ -299,7 +301,7 @@ class SettingsWindow(tk.Toplevel):
                 return
             enabled = bool(var.get())
             setattr(self.settings, attr, enabled)
-            if attr in ("show_total", "show_pace", "show_grok_bot", "show_antigravity"):
+            if attr in ("show_total", "show_pace", "show_grok_bot", "show_antigravity", "show_codex"):
                 if attr in ("show_total", "show_pace"):
                     if not self.settings.show_total and not self.settings.show_pace:
                         # Keep at least one usage section visible.
@@ -482,6 +484,8 @@ class SettingsWindow(tk.Toplevel):
             self.settings.show_grok_bot = True
         elif self.settings.minimized_metric == "antigravity":
             self.settings.show_antigravity = True
+        elif self.settings.minimized_metric == "codex":
+            self.settings.show_codex = True
         else:
             self.settings.show_total = True
         ensure_usage_section_visible(self.settings)

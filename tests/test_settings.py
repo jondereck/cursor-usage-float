@@ -8,6 +8,7 @@ from pathlib import Path
 from cursor_usage import PlanUsage
 from pace_history import default_history_path, resolve_pace_history_path
 from antigravity_usage import AntigravityUsage
+from codex_usage import CodexUsage
 from settings import (
     AppSettings,
     effective_click_through,
@@ -47,6 +48,12 @@ def test_show_antigravity_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "settings.json"
     save_settings(AppSettings(show_antigravity=False), path)
     assert load_settings(path).show_antigravity is False
+
+
+def test_show_codex_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    save_settings(AppSettings(show_codex=False), path)
+    assert load_settings(path).show_codex is False
 
 
 def test_legacy_settings_default_show_grok_bot(tmp_path: Path) -> None:
@@ -219,6 +226,22 @@ def test_effective_pill_metric() -> None:
             AppSettings(
                 minimized_metric="antigravity",
                 show_antigravity=False,
+                show_pace=True,
+            )
+        )
+        == "pace"
+    )
+    assert (
+        effective_pill_metric(
+            AppSettings(minimized_metric="codex", show_codex=True)
+        )
+        == "codex"
+    )
+    assert (
+        effective_pill_metric(
+            AppSettings(
+                minimized_metric="codex",
+                show_codex=False,
                 show_pace=True,
             )
         )
@@ -426,3 +449,10 @@ def test_resolve_minimized_percent_antigravity() -> None:
     anti = AntigravityUsage(usage_percent=88.5, is_eligible=True)
     assert resolve_minimized_percent(u, "antigravity", antigravity=anti) == 88.5
     assert resolve_minimized_percent(u, "antigravity", antigravity=None) == 40.0
+
+
+def test_resolve_minimized_percent_codex() -> None:
+    u = _usage(auto=40.0)
+    codex = CodexUsage(usage_percent=33.3, is_eligible=True)
+    assert resolve_minimized_percent(u, "codex", codex=codex) == 33.3
+    assert resolve_minimized_percent(u, "codex", codex=None) == 40.0
