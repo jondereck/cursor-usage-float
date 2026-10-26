@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from cursor_usage import GrokBotUsage, PlanUsage
+from antigravity_usage import AntigravityUsage
 from sync_status import record_sync_error, record_sync_success
 
 DENSITY_OPTIONS = ("full", "compact", "minimal")
-METRIC_OPTIONS = ("total", "auto", "api", "worst", "pace", "grok")
+METRIC_OPTIONS = ("total", "auto", "api", "worst", "pace", "grok", "antigravity")
 
 
 @dataclass
@@ -26,6 +27,7 @@ class AppSettings:
     show_total: bool = True
     show_pace: bool = True
     show_grok_bot: bool = True
+    show_antigravity: bool = True
     minimized_metric: str = "pace"  # total | auto | api | worst | pace | grok
     start_minimized: bool = False  # open hidden (pill) on launch
     start_with_windows: bool = False
@@ -80,8 +82,10 @@ def ensure_usage_section_visible(settings: AppSettings) -> AppSettings:
         settings.minimized_metric = "total"
     elif settings.minimized_metric == "grok" and not settings.show_grok_bot:
         settings.minimized_metric = "total" if settings.show_total else "pace"
+    elif settings.minimized_metric == "antigravity" and not settings.show_antigravity:
+        settings.minimized_metric = "total" if settings.show_total else "pace"
     elif (
-        settings.minimized_metric not in ("pace", "grok")
+        settings.minimized_metric not in ("pace", "grok", "antigravity")
         and not settings.show_total
         and settings.show_pace
     ):
@@ -99,6 +103,12 @@ def effective_pill_metric(settings: AppSettings) -> str:
     if metric == "grok":
         if settings.show_grok_bot:
             return "grok"
+        if settings.show_pace:
+            return "pace"
+        return "total"
+    if metric == "antigravity":
+        if settings.show_antigravity:
+            return "antigravity"
         if settings.show_pace:
             return "pace"
         return "total"
@@ -185,6 +195,7 @@ def resolve_minimized_percent(
     usage: PlanUsage,
     metric: str,
     grok: GrokBotUsage | None = None,
+    antigravity: AntigravityUsage | None = None,
 ) -> float:
     if metric == "auto":
         return usage.auto_percent
@@ -195,6 +206,10 @@ def resolve_minimized_percent(
     if metric == "grok":
         if grok is not None and grok.is_eligible:
             return grok.usage_percent
+        return usage.auto_percent
+    if metric == "antigravity":
+        if antigravity is not None and antigravity.is_eligible:
+            return antigravity.usage_percent
         return usage.auto_percent
     # "total" and "pace" fallback: Cursor Models pool (dashboard primary bar)
     return usage.auto_percent

@@ -17,6 +17,7 @@ from cursor_usage import (
     fetch_current_period_usage,
     fetch_grok_bot_usage,
 )
+from antigravity_usage import AntigravityUsage, fetch_antigravity_usage
 from paths import resource_path
 from pace_history import (
     active_pace_history_path,
@@ -310,6 +311,7 @@ class UsageFloater(tk.Tk):
         self._last_success_at: datetime | None = None
         self._last_usage: PlanUsage | None = None
         self._last_grok_bot: GrokBotUsage | None = None
+        self._last_antigravity: AntigravityUsage | None = None
         self._last_pace: PaceResult | None = None
         self._window_state = load_window_state()
         if self._window_state is not None:
@@ -435,6 +437,10 @@ class UsageFloater(tk.Tk):
         self.grok_bot_row = ProgressRow(self.expanded, "Grok Bot", hero=True)
         self.grok_bot_row.configure(bg=CARD)
         # Packed only when show_grok_bot and fetch is eligible.
+
+        self.antigravity_row = ProgressRow(self.expanded, "Antigravity", hero=True)
+        self.antigravity_row.configure(bg=CARD)
+        # Packed only when show_antigravity and fetch is eligible.
 
         # Daily pace / soft-stop (hero visual)
         self.pace_panel = tk.Frame(self.expanded, bg=CARD)
@@ -562,9 +568,11 @@ class UsageFloater(tk.Tk):
         self._pill_view: dict[str, object] = {
             "layout": "ring",  # ring | icons
             "show_grok": False,
+            "show_antigravity": False,
             "text": "—%",
             "cursor_text": "—%",
             "grok_text": "—%",
+            "antigravity_text": "—%",
             "number_color": TEXT,
             "ring_color": BAR_BG,
             "ring_extent": 0.0,
@@ -577,6 +585,7 @@ class UsageFloater(tk.Tk):
         }
         self._pill_icon_cursor: tk.PhotoImage | None = None
         self._pill_icon_grok: tk.PhotoImage | None = None
+        self._pill_icon_antigravity: tk.PhotoImage | None = None
         try:
             self._pill_icon_cursor = tk.PhotoImage(
                 file=str(resource_path("assets", "cursor-mark.png"))
@@ -584,9 +593,13 @@ class UsageFloater(tk.Tk):
             self._pill_icon_grok = tk.PhotoImage(
                 file=str(resource_path("assets", "grok-mark.png"))
             )
+            self._pill_icon_antigravity = tk.PhotoImage(
+                file=str(resource_path("assets", "antigravity-mark.png"))
+            )
         except tk.TclError:
             self._pill_icon_cursor = None
             self._pill_icon_grok = None
+            self._pill_icon_antigravity = None
         self.pill_face.bind("<Configure>", self._on_pill_configure)
         self.pill_face.bind("<ButtonPress-1>", self._start_drag)
         self.pill_face.bind("<B1-Motion>", self._on_drag)
@@ -863,6 +876,7 @@ class UsageFloater(tk.Tk):
             self.header,
             self.total_row,
             self.grok_bot_row,
+            self.antigravity_row,
             self.pace_panel,
             self.detail,
             self.reset_label,
@@ -887,6 +901,13 @@ class UsageFloater(tk.Tk):
 
         if self._grok_bot_should_show():
             self.grok_bot_row.pack(
+                fill="x",
+                pady=(12 if not first_section else (14 if self.settings.show_header else 0), 0),
+            )
+            first_section = False
+
+        if self._antigravity_should_show():
+            self.antigravity_row.pack(
                 fill="x",
                 pady=(12 if not first_section else (14 if self.settings.show_header else 0), 0),
             )
@@ -920,8 +941,16 @@ class UsageFloater(tk.Tk):
             and not self._show_pill_mode()
         )
 
+    def _antigravity_should_show(self) -> bool:
+        return (
+            bool(self.settings.show_antigravity)
+            and self._last_antigravity is not None
+            and self._last_antigravity.is_eligible
+            and not self._show_pill_mode()
+        )
+
     def _update_section_visibility(self) -> None:
-        """Apply Total / Grok Bot / Today's pace on-off without full chrome rebuild."""
+        """Apply Total / Grok Bot / Antigravity / Today's pace on-off without full chrome rebuild."""
         if self._show_pill_mode():
             return
         if self.settings.show_total:
@@ -930,6 +959,7 @@ class UsageFloater(tk.Tk):
         else:
             self.total_row.pack_forget()
         self._update_grok_bot_visibility()
+        self._update_antigravity_visibility()
         self._update_pace_visibility()
 
     def _update_grok_bot_visibility(self) -> None:
@@ -947,13 +977,32 @@ class UsageFloater(tk.Tk):
         else:
             self.grok_bot_row.pack_forget()
 
+    def _update_antigravity_visibility(self) -> None:
+        if not hasattr(self, "antigravity_row"):
+            return
+        show = self._antigravity_should_show()
+        if show:
+            if not self.antigravity_row.winfo_ismapped():
+                if self.grok_bot_row.winfo_ismapped():
+                    self.antigravity_row.pack(fill="x", pady=(12, 0), after=self.grok_bot_row)
+                elif self.total_row.winfo_ismapped():
+                    self.antigravity_row.pack(fill="x", pady=(12, 0), after=self.total_row)
+                elif self.header.winfo_ismapped():
+                    self.antigravity_row.pack(fill="x", pady=(14, 0), after=self.header)
+                else:
+                    self.antigravity_row.pack(fill="x", pady=(0, 0))
+        else:
+            self.antigravity_row.pack_forget()
+
     def _update_pace_visibility(self) -> None:
         if not hasattr(self, "pace_panel"):
             return
         show = bool(self.settings.show_pace) and not self._show_pill_mode()
         if show:
             if not self.pace_panel.winfo_ismapped():
-                if self.grok_bot_row.winfo_ismapped():
+                if self.antigravity_row.winfo_ismapped():
+                    self.pace_panel.pack(fill="x", pady=(12, 0), after=self.antigravity_row)
+                elif self.grok_bot_row.winfo_ismapped():
                     self.pace_panel.pack(fill="x", pady=(12, 0), after=self.grok_bot_row)
                 elif self.total_row.winfo_ismapped():
                     self.pace_panel.pack(fill="x", pady=(12, 0), after=self.total_row)
@@ -1066,6 +1115,14 @@ class UsageFloater(tk.Tk):
             and self._last_grok_bot.is_eligible
         )
 
+    def _pill_antigravity_half(self) -> bool:
+        """True when Antigravity usage should appear in the pill."""
+        return (
+            bool(self.settings.show_antigravity)
+            and self._last_antigravity is not None
+            and self._last_antigravity.is_eligible
+        )
+
     def _pill_metrics(self) -> tuple[int, int, int, int]:
         """Return (width, height, text_w, badge_w) for compact capsule."""
         view = self._pill_view
@@ -1079,6 +1136,10 @@ class UsageFloater(tk.Tk):
             show_grok = bool(view.get("show_grok"))
             grok_w = (
                 font_nums.measure(str(view.get("grok_text") or "—%")) if show_grok else 0
+            )
+            show_anti = bool(view.get("show_antigravity"))
+            anti_w = (
+                font_nums.measure(str(view.get("antigravity_text") or "—%")) if show_anti else 0
             )
             cue_w = 0
             cue = str(view.get("cue") or "")
@@ -1100,8 +1161,17 @@ class UsageFloater(tk.Tk):
                     + PILL_DUAL_ITEM_GAP
                     + grok_w
                 )
+            if show_anti:
+                width += (
+                    PILL_DUAL_SECTION_GAP
+                    + 1  # divider
+                    + PILL_DUAL_SECTION_GAP
+                    + PILL_ICON
+                    + PILL_DUAL_ITEM_GAP
+                    + anti_w
+                )
             width += cue_w + PILL_DUAL_PAD_X
-            return max(width, PILL_HEIGHT), PILL_HEIGHT, cursor_w + grok_w, 0
+            return max(width, PILL_HEIGHT), PILL_HEIGHT, cursor_w + grok_w + anti_w, 0
 
         text = str(view.get("text") or "—%")
         font_nums = tkfont.Font(family=PILL_NUM_FONT[0], size=PILL_NUM_FONT[1], weight="bold")
@@ -1255,6 +1325,42 @@ class UsageFloater(tk.Tk):
             )
             x += font_nums.measure(grok_text)
 
+        if view.get("show_antigravity"):
+            x += PILL_DUAL_SECTION_GAP
+            # Divider
+            c.create_line(
+                x,
+                cy - PILL_DUAL_DIVIDER_H / 2,
+                x,
+                cy + PILL_DUAL_DIVIDER_H / 2,
+                fill=BORDER,
+                width=1,
+                tags="face",
+            )
+            x += 1 + PILL_DUAL_SECTION_GAP
+
+            # Antigravity
+            if self._pill_icon_antigravity is not None:
+                c.create_image(
+                    x + PILL_ICON / 2,
+                    cy,
+                    image=self._pill_icon_antigravity,
+                    anchor="center",
+                    tags="face",
+                )
+            x += PILL_ICON + PILL_DUAL_ITEM_GAP
+            anti_text = str(view.get("antigravity_text") or "—%")
+            c.create_text(
+                x,
+                cy,
+                text=anti_text,
+                fill=color,
+                font=PILL_DUAL_NUM_FONT,
+                anchor="w",
+                tags="face",
+            )
+            x += font_nums.measure(anti_text)
+
         cue = str(view.get("cue") or "")
         if cue:
             x += PILL_DUAL_SECTION_GAP
@@ -1366,38 +1472,66 @@ class UsageFloater(tk.Tk):
     def _update_pill_percent(self) -> None:
         view = self._pill_view
         if self._last_usage is None:
-            view.update(
-                {
-                    "layout": "ring",
-                    "show_grok": False,
-                    "text": "—%",
-                    "cursor_text": "—%",
-                    "grok_text": "—%",
-                    "number_color": TEXT,
-                    "ring_extent": 0.0,
-                    "show_badge": False,
-                    "badge_text": "",
-                }
-            )
+            show_anti = self._pill_antigravity_half()
+            if show_anti and self._last_antigravity is not None:
+                anti_text = format_usage_percent(self._last_antigravity.usage_percent)
+                view.update(
+                    {
+                        "layout": "icons",
+                        "show_grok": False,
+                        "show_antigravity": True,
+                        "cursor_text": "—%",
+                        "grok_text": "—%",
+                        "antigravity_text": anti_text,
+                        "text": anti_text,
+                        "number_color": TEXT,
+                        "ring_extent": 0.0,
+                        "show_badge": False,
+                        "badge_text": "",
+                    }
+                )
+            else:
+                view.update(
+                    {
+                        "layout": "ring",
+                        "show_grok": False,
+                        "show_antigravity": False,
+                        "text": "—%",
+                        "cursor_text": "—%",
+                        "grok_text": "—%",
+                        "antigravity_text": "—%",
+                        "number_color": TEXT,
+                        "ring_extent": 0.0,
+                        "show_badge": False,
+                        "badge_text": "",
+                    }
+                )
             self._apply_pill_border(CARD)
             return
 
         show_grok = self._pill_grok_half()
+        show_anti = self._pill_antigravity_half()
         metric = effective_pill_metric(self.settings)
 
-        # Cursor icon+% always (Grok half only when on). Pace ring only when
-        # pill metric is Today's pace and Grok is not sharing the capsule.
-        if show_grok or metric != "pace":
+        # Cursor icon+% always (Grok / Antigravity half only when on). Pace ring only when
+        # pill metric is Today's pace and neither is sharing the capsule.
+        if show_grok or show_anti or metric != "pace":
             grok_text = "—%"
             if show_grok and self._last_grok_bot is not None:
                 grok_text = format_usage_percent(self._last_grok_bot.usage_percent)
+            anti_text = "—%"
+            if show_anti and self._last_antigravity is not None:
+                anti_text = format_usage_percent(self._last_antigravity.usage_percent)
+            cursor_txt = format_usage_percent(self._last_usage.auto_percent)
             view.update(
                 {
                     "layout": "icons",
                     "show_grok": show_grok,
-                    "cursor_text": format_usage_percent(self._last_usage.auto_percent),
+                    "show_antigravity": show_anti,
+                    "cursor_text": cursor_txt,
                     "grok_text": grok_text,
-                    "text": format_usage_percent(self._last_usage.auto_percent),
+                    "antigravity_text": anti_text,
+                    "text": cursor_txt,
                     "number_color": TEXT,
                     "ring_extent": 0.0,
                     "show_badge": False,
@@ -1421,6 +1555,7 @@ class UsageFloater(tk.Tk):
                 {
                     "layout": "ring",
                     "show_grok": False,
+                    "show_antigravity": False,
                     "text": chrome.text,
                     "number_color": chrome.number_color,
                     "ring_color": chrome.ring_color,
@@ -1439,6 +1574,7 @@ class UsageFloater(tk.Tk):
             {
                 "layout": "ring",
                 "show_grok": False,
+                "show_antigravity": False,
                 "text": "—%",
                 "number_color": TEXT,
                 "ring_extent": 0.0,
@@ -1733,10 +1869,21 @@ class UsageFloater(tk.Tk):
             self.status_label.configure(text="Refreshing…")
 
         def worker() -> None:
+            usage: PlanUsage | None = None
+            grok: GrokBotUsage | None = None
+            grok_ok = False
+            anti: AntigravityUsage | None = None
+            anti_ok = False
+            cursor_error: str | None = None
+
             try:
                 usage = fetch_current_period_usage()
-                grok: GrokBotUsage | None = None
-                grok_ok = False
+            except (AuthError, UsageError) as exc:
+                cursor_error = str(exc)
+            except Exception as exc:  # noqa: BLE001
+                cursor_error = f"Unexpected error: {exc}"
+
+            if usage is not None:
                 try:
                     grok = fetch_grok_bot_usage()
                     grok_ok = True
@@ -1744,20 +1891,28 @@ class UsageFloater(tk.Tk):
                     pass
                 except Exception:  # noqa: BLE001
                     pass
+
+            try:
+                anti = fetch_antigravity_usage()
+                anti_ok = True
+            except Exception:  # noqa: BLE001
+                pass
+
+            if usage is not None:
                 self.after(
                     0,
-                    lambda u=usage, g=grok, ok=grok_ok: self._apply_usage(
-                        u, grok=g, grok_updated=ok
+                    lambda u=usage, g=grok, g_ok=grok_ok, a=anti, a_ok=anti_ok: self._apply_usage(
+                        u, grok=g, grok_updated=g_ok, antigravity=a, antigravity_updated=a_ok
                     ),
                 )
-            except (AuthError, UsageError) as exc:
-                msg = str(exc)
-                self.after(0, lambda: self._apply_error(msg))
-            except Exception as exc:  # noqa: BLE001
-                msg = f"Unexpected error: {exc}"
-                self.after(0, lambda: self._apply_error(msg))
-            finally:
-                self.after(0, self._clear_refreshing)
+            else:
+                self.after(
+                    0,
+                    lambda m=cursor_error or "Cursor offline", a=anti, a_ok=anti_ok: self._apply_error(
+                        m, antigravity=a, antigravity_updated=a_ok
+                    ),
+                )
+            self.after(0, self._clear_refreshing)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1771,10 +1926,14 @@ class UsageFloater(tk.Tk):
         usage: PlanUsage,
         grok: GrokBotUsage | None = None,
         grok_updated: bool = True,
+        antigravity: AntigravityUsage | None = None,
+        antigravity_updated: bool = True,
     ) -> None:
         self._last_usage = usage
         if grok_updated:
             self._last_grok_bot = grok
+        if antigravity_updated:
+            self._last_antigravity = antigravity
         self._connection_ok = True
         self._last_success_at = datetime.now()
         self.total_row.set_percent(usage.auto_percent)
@@ -1782,6 +1941,7 @@ class UsageFloater(tk.Tk):
         self.auto_row.set_percent(usage.auto_percent)
         self.api_row.set_percent(usage.api_percent)
         self._apply_grok_bot(self._last_grok_bot)
+        self._apply_antigravity(self._last_antigravity)
         self._update_pace_from_usage(usage)
         self._paint_status()
         self._update_pill_percent()
@@ -1798,6 +1958,12 @@ class UsageFloater(tk.Tk):
             return
         self.grok_bot_row.set_percent(grok.usage_percent)
         self.grok_bot_row.set_subtext(_format_grok_bot_subtext(grok))
+
+    def _apply_antigravity(self, antigravity: AntigravityUsage | None) -> None:
+        if antigravity is None or not antigravity.is_eligible:
+            return
+        self.antigravity_row.set_percent(antigravity.usage_percent)
+        self.antigravity_row.set_subtext(_format_antigravity_subtext(antigravity))
 
     def _pace_history_path(self) -> Path:
         return active_pace_history_path(self.settings.pace_sync_folder)
@@ -1885,11 +2051,21 @@ class UsageFloater(tk.Tk):
             self._update_section_visibility()
         self._resize_to_content()
 
-    def _apply_error(self, message: str) -> None:
+    def _apply_error(
+        self,
+        message: str,
+        antigravity: AntigravityUsage | None = None,
+        antigravity_updated: bool = False,
+    ) -> None:
         self._connection_ok = False
+        if antigravity_updated:
+            self._last_antigravity = antigravity
+            self._apply_antigravity(self._last_antigravity)
+            self._update_pill_percent()
         if not self._show_pill_mode():
             self.status_label.configure(text=message)
             self._update_stale_badge()
+            self._update_section_visibility()
         self._paint_status()
         self._resize_to_content()
 
@@ -1914,6 +2090,33 @@ def _parse_billing_end(raw: str) -> datetime | None:
         return datetime.fromtimestamp(num, tz=timezone.utc)
     except (TypeError, ValueError, OSError):
         return None
+
+
+def _format_antigravity_subtext(antigravity: AntigravityUsage) -> str:
+    """Antigravity allowance label with models and resets-in hint."""
+    if antigravity.gemini_percent is not None and antigravity.claude_gpt_percent is not None:
+        base = f"Gemini {int(round(antigravity.gemini_percent))}% · Claude/GPT {int(round(antigravity.claude_gpt_percent))}%"
+    else:
+        base = "Weekly limit"
+    if not antigravity.next_reset:
+        return base
+    end = _parse_billing_end(str(antigravity.next_reset).strip())
+    if end is None:
+        return base
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    delta = end - now
+    if delta.total_seconds() <= 0:
+        return f"{base} · resets soon"
+    days = delta.days
+    hours = delta.seconds // 3600
+    if days >= 1:
+        return f"{base} · resets in {days}d"
+    if hours >= 1:
+        return f"{base} · resets in {hours}h"
+    minutes = max(1, delta.seconds // 60)
+    return f"{base} · resets in {minutes}m"
 
 
 def _format_grok_bot_subtext(grok: GrokBotUsage) -> str:

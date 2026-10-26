@@ -4,8 +4,9 @@ Small **always-on-top** floating window for Windows that shows your Cursor plan 
 
 - **Cursor Models** % (Composer / Cursor Grok models)
 - **Grok Bot** weekly % (separate allowance; Settings on/off)
-- Minimized **pill** shows Cursor icon + %; adds Grok Bot (icon + %) beside
-  it when that toggle is on
+- **Antigravity** weekly % (Gemini & 3P model quotas; Settings on/off)
+- Minimized **pill** shows Cursor icon + %; adds Grok Bot (icon + %) and
+  Antigravity (icon + %) beside it when those toggles are on
 - **Other Models** %
 - **Today's pace / soft-stop** — equal daily budget that automatically
   rebalances so usage lasts to the end of the billing cycle
@@ -46,7 +47,8 @@ Notes: first launch is a bit slower (the onefile bundle self-extracts), some ant
 2. Calls Cursor’s HTTPS usage endpoints:  
    `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`  
    and (best-effort) `…/GetSandUsageStatus` for **Grok Bot** weekly usage.
-3. Draws the progress bars and refreshes about every **3 minutes** (↻ for manual refresh).
+3. Connects to the local **Antigravity** language server to read live model quotas (Gemini & 3P models).
+4. Draws the progress bars and refreshes about every **3 minutes** (↻ for manual refresh).
 4. Splits the start-of-day remaining allowance equally across the calendar
    days through reset. Under-use carries forward and raises later daily
    budgets; over-use lowers them. Soft-stop states:
@@ -96,7 +98,7 @@ Progress bars shift color by urgency: calm under 70%, warn 70–90%, critical at
 
 | Group | Options |
 |--------|---------|
-| **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, **Cursor Models** on/off, **Today's pace** on/off, **Grok Bot** on/off, reset countdown, stale badge |
+| **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, **Cursor Models** on/off, **Today's pace** on/off, **Grok Bot** on/off, **Antigravity** on/off, reset countdown, stale badge |
 | **Behavior** | Always on top, click-through |
 | **Sync** | Shared folder for pace + settings, colored backup state, and last successful shared-folder write time |
 | **Startup** | Start with Windows (HKCU `Run` key `CursorUsageFloat`), Open hidden (pill) |

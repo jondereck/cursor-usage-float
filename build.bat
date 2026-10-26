@@ -43,6 +43,7 @@ echo Building portable exe...
   --add-data "assets\app.ico;assets" ^
   --add-data "assets\cursor-mark.png;assets" ^
   --add-data "assets\grok-mark.png;assets" ^
+  --add-data "assets\antigravity-mark.png;assets" ^
   main.py
 if errorlevel 1 (
   echo Build failed.

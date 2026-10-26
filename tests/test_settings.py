@@ -7,6 +7,7 @@ from pathlib import Path
 
 from cursor_usage import PlanUsage
 from pace_history import default_history_path, resolve_pace_history_path
+from antigravity_usage import AntigravityUsage
 from settings import (
     AppSettings,
     effective_click_through,
@@ -40,6 +41,12 @@ def test_show_grok_bot_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "settings.json"
     save_settings(AppSettings(show_grok_bot=False), path)
     assert load_settings(path).show_grok_bot is False
+
+
+def test_show_antigravity_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    save_settings(AppSettings(show_antigravity=False), path)
+    assert load_settings(path).show_antigravity is False
 
 
 def test_legacy_settings_default_show_grok_bot(tmp_path: Path) -> None:
@@ -196,6 +203,22 @@ def test_effective_pill_metric() -> None:
             AppSettings(
                 minimized_metric="grok",
                 show_grok_bot=False,
+                show_pace=True,
+            )
+        )
+        == "pace"
+    )
+    assert (
+        effective_pill_metric(
+            AppSettings(minimized_metric="antigravity", show_antigravity=True)
+        )
+        == "antigravity"
+    )
+    assert (
+        effective_pill_metric(
+            AppSettings(
+                minimized_metric="antigravity",
+                show_antigravity=False,
                 show_pace=True,
             )
         )
@@ -396,3 +419,10 @@ def test_bar_color_thresholds() -> None:
     assert mid != CRITICAL.lower()
     assert bar_color_for_percent(80).lower() == WARN.lower()
     assert bar_color_for_percent(100).lower() == CRITICAL.lower()
+
+
+def test_resolve_minimized_percent_antigravity() -> None:
+    u = _usage(auto=40.0)
+    anti = AntigravityUsage(usage_percent=88.5, is_eligible=True)
+    assert resolve_minimized_percent(u, "antigravity", antigravity=anti) == 88.5
+    assert resolve_minimized_percent(u, "antigravity", antigravity=None) == 40.0
