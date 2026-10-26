@@ -8,9 +8,9 @@
 - Settings → Appearance → **Grok Bot** on/off (`show_grok_bot`, default on).
 - Pill metric option **Grok Bot**. Hidden when the account has no personal
   included weekly allowance (or pooled enterprise).
-- Pill dual layout when Grok Bot is eligible: Cursor icon + % | Grok icon + %
-  (compact HTML-style capsule; no ring). Falls back to single ring pill when
-  Grok Bot is off / unavailable.
+- Pill icons layout: Cursor icon + % always; optional | Grok icon + % when
+  Grok Bot is on/eligible. Pace ring only when pill metric is Today's pace
+  and Grok half is off.
 
 ## 2026-08-13
 

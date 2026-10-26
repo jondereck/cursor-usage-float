@@ -4,8 +4,8 @@ Small **always-on-top** floating window for Windows that shows your Cursor plan 
 
 - **Cursor Models** % (Composer / Cursor Grok models)
 - **Grok Bot** weekly % (separate allowance; Settings on/off)
-- Minimized **pill** shows Cursor Models + Grok Bot side-by-side (icon + %)
-  when Grok Bot is available
+- Minimized **pill** shows Cursor icon + %; adds Grok Bot (icon + %) beside
+  it when that toggle is on
 - **Other Models** %
 - **Today's pace / soft-stop** — equal daily budget that automatically
   rebalances so usage lasts to the end of the billing cycle
