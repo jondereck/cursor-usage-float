@@ -40,6 +40,7 @@ class AntigravityUsage:
 
 _cached_port: int | None = None
 _cached_csrf: str | None = None
+_cached_scheme: str | None = None
 
 _ssl_context = ssl.create_default_context()
 _ssl_context.check_hostname = False
@@ -112,10 +113,15 @@ def parse_antigravity_quota(payload: dict[str, Any]) -> AntigravityUsage:
     )
 
 
-def _request_quota_summary(port: int, csrf: str, timeout: float = 3.0) -> dict[str, Any]:
+def _request_quota_summary(
+    port: int,
+    csrf: str,
+    timeout: float = 3.0,
+    scheme: str = "https",
+) -> dict[str, Any]:
     import urllib.request
 
-    url = f"https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary"
+    url = f"{scheme}://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary"
     req = urllib.request.Request(
         url,
         data=b"{}",
@@ -129,8 +135,8 @@ def _request_quota_summary(port: int, csrf: str, timeout: float = 3.0) -> dict[s
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _discover_language_server() -> tuple[int, str]:
-    """Find the running language_server.exe PID, CSRF token, and working HTTPS port."""
+def _discover_language_server() -> tuple[int, str, str]:
+    """Find the language server's PID, CSRF token, and working local quota endpoint."""
     ps_script = """
     $p = Get-CimInstance Win32_Process -Filter "name = 'language_server.exe'"
     if ($p) {
@@ -169,7 +175,11 @@ def _discover_language_server() -> tuple[int, str]:
         raise AntigravityError("CSRF token not found in language_server command line.")
     csrf = m_csrf.group(1)
 
-    pid_str = str(pid)
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError) as exc:
+        raise AntigravityError("Antigravity language_server.exe PID is invalid.") from exc
+
     deadline = time.monotonic() + 5.0
     last_ports: list[int] = []
     while time.monotonic() < deadline:
@@ -180,28 +190,43 @@ def _discover_language_server() -> tuple[int, str]:
                 timeout=2,
             )
         except Exception as exc:
-            raise AntigravityError(f"Failed to run netstat: {exc}") from exc
+            raise AntigravityError(
+                f"Failed to inspect Antigravity listening ports: {exc}"
+            ) from exc
 
         ports: list[int] = []
         for line in netstat_out.splitlines():
             parts = line.split()
-            if len(parts) >= 5 and parts[3] == "LISTENING" and parts[4] == pid_str:
-                addr = parts[1]
-                if ":" in addr:
-                    try:
-                        port = int(addr.rsplit(":", 1)[1])
-                        if port not in ports:
-                            ports.append(port)
-                    except ValueError:
-                        continue
+            if len(parts) < 5 or parts[0].upper() != "TCP":
+                continue
+            if parts[3].upper() != "LISTENING" or parts[4] != str(pid):
+                continue
+            local_endpoint, remote_endpoint = parts[1], parts[2]
+            if remote_endpoint not in ("0.0.0.0:0", "[::]:0"):
+                continue
+            if local_endpoint.startswith("[") and "]:" in local_endpoint:
+                address, port_text = local_endpoint[1:].rsplit("]:", 1)
+            elif ":" in local_endpoint:
+                address, port_text = local_endpoint.rsplit(":", 1)
+            else:
+                continue
+            if address not in ("127.0.0.1", "0.0.0.0", "::1", "::"):
+                continue
+            try:
+                port = int(port_text)
+            except ValueError:
+                continue
+            if 1 <= port <= 65535 and port not in ports:
+                ports.append(port)
 
         last_ports = ports
         for port in ports:
-            try:
-                _request_quota_summary(port, csrf, timeout=1.0)
-                return port, csrf
-            except Exception:
-                continue
+            for scheme in ("https", "http"):
+                try:
+                    _request_quota_summary(port, csrf, timeout=1.0, scheme=scheme)
+                    return port, csrf, scheme
+                except Exception:
+                    continue
 
         time.sleep(0.25)
 
@@ -214,19 +239,26 @@ def _discover_language_server() -> tuple[int, str]:
 
 def fetch_antigravity_usage() -> AntigravityUsage:
     """Fetch current Antigravity quota usage, using cached port/CSRF if valid."""
-    global _cached_port, _cached_csrf
+    global _cached_port, _cached_csrf, _cached_scheme
 
-    if _cached_port is not None and _cached_csrf is not None:
+    if _cached_port is not None and _cached_csrf is not None and _cached_scheme is not None:
         try:
-            data = _request_quota_summary(_cached_port, _cached_csrf, timeout=1.0)
+            data = _request_quota_summary(
+                _cached_port,
+                _cached_csrf,
+                timeout=3.0,
+                scheme=_cached_scheme,
+            )
             return parse_antigravity_quota(data)
         except Exception:
             _cached_port = None
             _cached_csrf = None
+            _cached_scheme = None
 
-    port, csrf = _discover_language_server()
+    port, csrf, scheme = _discover_language_server()
     _cached_port = port
     _cached_csrf = csrf
+    _cached_scheme = scheme
 
-    data = _request_quota_summary(port, csrf, timeout=3.0)
+    data = _request_quota_summary(port, csrf, timeout=3.0, scheme=scheme)
     return parse_antigravity_quota(data)
