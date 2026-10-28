@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import re
 import ssl
-import subprocess
 import time
 from dataclasses import dataclass
 from typing import Any
+
+import psutil
 
 
 class AntigravityError(Exception):
@@ -137,96 +138,47 @@ def _request_quota_summary(
 
 def _discover_language_server() -> tuple[int, str, str]:
     """Find the language server's PID, CSRF token, and working local quota endpoint."""
-    ps_script = """
-    $p = Get-CimInstance Win32_Process -Filter "name = 'language_server.exe'"
-    if ($p) {
-        [PSCustomObject]@{
-            Id = $p.ProcessId
-            CommandLine = $p.CommandLine
-        } | ConvertTo-Json
-    }
-    """
-    try:
-        proc = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_script],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except Exception as exc:
-        raise AntigravityError(f"Failed to query Antigravity process: {exc}") from exc
+    servers: list[tuple[int, str]] = []
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            if (proc.info.get("name") or "").lower() != "language_server.exe":
+                continue
+            cmdline = " ".join(proc.info.get("cmdline") or [])
+            match = re.search(r"--csrf_token(?:=|\s+)([a-f0-9\-]+)", cmdline)
+            if match:
+                servers.append((int(proc.info["pid"]), match.group(1)))
+        except (psutil.AccessDenied, psutil.NoSuchProcess, TypeError, ValueError):
+            continue
 
-    stdout = proc.stdout.strip()
-    if not stdout:
-        raise AntigravityError("Antigravity language_server.exe is not running.")
-
-    try:
-        info = json.loads(stdout)
-    except Exception as exc:
-        raise AntigravityError(f"Could not parse process info: {exc}") from exc
-
-    pid = info.get("Id")
-    cmdline = str(info.get("CommandLine") or "")
-    if not pid or not cmdline:
-        raise AntigravityError("Antigravity language_server.exe process info incomplete.")
-
-    m_csrf = re.search(r"--csrf_token\s+([a-f0-9\-]+)", cmdline)
-    if not m_csrf:
-        raise AntigravityError("CSRF token not found in language_server command line.")
-    csrf = m_csrf.group(1)
-
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError) as exc:
-        raise AntigravityError("Antigravity language_server.exe PID is invalid.") from exc
+    if not servers:
+        raise AntigravityError("Antigravity language_server.exe is not running or its CSRF token is unavailable.")
 
     deadline = time.monotonic() + 5.0
     last_ports: list[int] = []
     while time.monotonic() < deadline:
-        try:
-            netstat_out = subprocess.check_output(
-                ["netstat", "-ano", "-p", "tcp"],
-                text=True,
-                timeout=2,
-            )
-        except Exception as exc:
-            raise AntigravityError(
-                f"Failed to inspect Antigravity listening ports: {exc}"
-            ) from exc
-
         ports: list[int] = []
-        for line in netstat_out.splitlines():
-            parts = line.split()
-            if len(parts) < 5 or parts[0].upper() != "TCP":
-                continue
-            if parts[3].upper() != "LISTENING" or parts[4] != str(pid):
-                continue
-            local_endpoint, remote_endpoint = parts[1], parts[2]
-            if remote_endpoint not in ("0.0.0.0:0", "[::]:0"):
-                continue
-            if local_endpoint.startswith("[") and "]:" in local_endpoint:
-                address, port_text = local_endpoint[1:].rsplit("]:", 1)
-            elif ":" in local_endpoint:
-                address, port_text = local_endpoint.rsplit(":", 1)
-            else:
-                continue
-            if address not in ("127.0.0.1", "0.0.0.0", "::1", "::"):
-                continue
+        for pid, csrf in servers:
             try:
-                port = int(port_text)
-            except ValueError:
+                connections = psutil.Process(pid).net_connections(kind="tcp")
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
                 continue
-            if 1 <= port <= 65535 and port not in ports:
-                ports.append(port)
+            for connection in connections:
+                if connection.status != psutil.CONN_LISTEN or not connection.laddr:
+                    continue
+                address = connection.laddr.ip
+                if address not in ("127.0.0.1", "0.0.0.0", "::1", "::"):
+                    continue
+                port = connection.laddr.port
+                if 1 <= port <= 65535 and port not in ports:
+                    ports.append(port)
+                    for scheme in ("https", "http"):
+                        try:
+                            _request_quota_summary(port, csrf, timeout=1.0, scheme=scheme)
+                            return port, csrf, scheme
+                        except Exception:
+                            continue
 
         last_ports = ports
-        for port in ports:
-            for scheme in ("https", "http"):
-                try:
-                    _request_quota_summary(port, csrf, timeout=1.0, scheme=scheme)
-                    return port, csrf, scheme
-                except Exception:
-                    continue
 
         time.sleep(0.25)
 
