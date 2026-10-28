@@ -6,6 +6,7 @@ import json
 import re
 import ssl
 import subprocess
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -111,7 +112,7 @@ def parse_antigravity_quota(payload: dict[str, Any]) -> AntigravityUsage:
     )
 
 
-def _request_quota_summary(port: int, csrf: str, timeout: float = 1.0) -> dict[str, Any]:
+def _request_quota_summary(port: int, csrf: str, timeout: float = 3.0) -> dict[str, Any]:
     import urllib.request
 
     url = f"https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary"
@@ -168,41 +169,47 @@ def _discover_language_server() -> tuple[int, str]:
         raise AntigravityError("CSRF token not found in language_server command line.")
     csrf = m_csrf.group(1)
 
-    # Find listening ports for this PID using netstat (built-in and fast)
-    try:
-        netstat_out = subprocess.check_output(
-            ["netstat", "-ano", "-p", "tcp"],
-            text=True,
-            timeout=3,
-        )
-    except Exception as exc:
-        raise AntigravityError(f"Failed to run netstat: {exc}") from exc
-
-    ports: list[int] = []
     pid_str = str(pid)
-    for line in netstat_out.splitlines():
-        parts = line.split()
-        if len(parts) >= 5 and parts[3] == "LISTENING" and parts[4] == pid_str:
-            addr = parts[1]
-            if ":" in addr:
-                try:
-                    port = int(addr.rsplit(":", 1)[1])
-                    if port not in ports:
-                        ports.append(port)
-                except ValueError:
-                    continue
-
-    if not ports:
-        raise AntigravityError(f"No listening ports found for language_server PID {pid}.")
-
-    for port in ports:
+    deadline = time.monotonic() + 5.0
+    last_ports: list[int] = []
+    while time.monotonic() < deadline:
         try:
-            _request_quota_summary(port, csrf, timeout=1.0)
-            return port, csrf
-        except Exception:
-            continue
+            netstat_out = subprocess.check_output(
+                ["netstat", "-ano", "-p", "tcp"],
+                text=True,
+                timeout=2,
+            )
+        except Exception as exc:
+            raise AntigravityError(f"Failed to run netstat: {exc}") from exc
 
-    raise AntigravityError(f"Could not connect to Antigravity on ports {ports}.")
+        ports: list[int] = []
+        for line in netstat_out.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[3] == "LISTENING" and parts[4] == pid_str:
+                addr = parts[1]
+                if ":" in addr:
+                    try:
+                        port = int(addr.rsplit(":", 1)[1])
+                        if port not in ports:
+                            ports.append(port)
+                    except ValueError:
+                        continue
+
+        last_ports = ports
+        for port in ports:
+            try:
+                _request_quota_summary(port, csrf, timeout=1.0)
+                return port, csrf
+            except Exception:
+                continue
+
+        time.sleep(0.25)
+
+    if not last_ports:
+        raise AntigravityError(
+            f"No listening ports found for language_server PID {pid} after waiting."
+        )
+    raise AntigravityError(f"Could not connect to Antigravity on ports {last_ports}.")
 
 
 def fetch_antigravity_usage() -> AntigravityUsage:
@@ -221,5 +228,5 @@ def fetch_antigravity_usage() -> AntigravityUsage:
     _cached_port = port
     _cached_csrf = csrf
 
-    data = _request_quota_summary(port, csrf, timeout=2.0)
+    data = _request_quota_summary(port, csrf, timeout=3.0)
     return parse_antigravity_quota(data)

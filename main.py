@@ -313,6 +313,7 @@ class UsageFloater(tk.Tk):
         self._last_usage: PlanUsage | None = None
         self._last_grok_bot: GrokBotUsage | None = None
         self._last_antigravity: AntigravityUsage | None = None
+        self._antigravity_error: str | None = "Waiting for Antigravity usage…"
         self._last_codex: CodexUsage | None = None
         self._last_pace: PaceResult | None = None
         self._window_state = load_window_state()
@@ -965,8 +966,10 @@ class UsageFloater(tk.Tk):
     def _antigravity_should_show(self) -> bool:
         return (
             bool(self.settings.show_antigravity)
-            and self._last_antigravity is not None
-            and self._last_antigravity.is_eligible
+            and (
+                (self._last_antigravity is not None and self._last_antigravity.is_eligible)
+                or self._antigravity_error is not None
+            )
             and not self._show_pill_mode()
         )
 
@@ -1997,6 +2000,7 @@ class UsageFloater(tk.Tk):
             grok_ok = False
             anti: AntigravityUsage | None = None
             anti_ok = False
+            anti_error: str | None = None
             codex: CodexUsage | None = None
             codex_ok = False
             cursor_error: str | None = None
@@ -2020,8 +2024,8 @@ class UsageFloater(tk.Tk):
             try:
                 anti = fetch_antigravity_usage()
                 anti_ok = True
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                anti_error = str(exc).strip()[:160] or type(exc).__name__
 
             try:
                 codex = fetch_codex_usage()
@@ -2032,15 +2036,15 @@ class UsageFloater(tk.Tk):
             if usage is not None:
                 self.after(
                     0,
-                    lambda u=usage, g=grok, g_ok=grok_ok, a=anti, a_ok=anti_ok, c=codex, c_ok=codex_ok: self._apply_usage(
-                        u, grok=g, grok_updated=g_ok, antigravity=a, antigravity_updated=a_ok, codex=c, codex_updated=c_ok
+                    lambda u=usage, g=grok, g_ok=grok_ok, a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok: self._apply_usage(
+                        u, grok=g, grok_updated=g_ok, antigravity=a, antigravity_updated=a_ok, antigravity_error=ae, codex=c, codex_updated=c_ok
                     ),
                 )
             else:
                 self.after(
                     0,
-                    lambda m=cursor_error or "Cursor offline", a=anti, a_ok=anti_ok, c=codex, c_ok=codex_ok: self._apply_error(
-                        m, antigravity=a, antigravity_updated=a_ok, codex=c, codex_updated=c_ok
+                    lambda m=cursor_error or "Cursor offline", a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok: self._apply_error(
+                        m, antigravity=a, antigravity_updated=a_ok, antigravity_error=ae, codex=c, codex_updated=c_ok
                     ),
                 )
             self.after(0, self._clear_refreshing)
@@ -2059,6 +2063,7 @@ class UsageFloater(tk.Tk):
         grok_updated: bool = True,
         antigravity: AntigravityUsage | None = None,
         antigravity_updated: bool = True,
+        antigravity_error: str | None = None,
         codex: CodexUsage | None = None,
         codex_updated: bool = True,
     ) -> None:
@@ -2067,6 +2072,7 @@ class UsageFloater(tk.Tk):
             self._last_grok_bot = grok
         if antigravity_updated:
             self._last_antigravity = antigravity
+        self._antigravity_error = antigravity_error
         if codex_updated:
             self._last_codex = codex
         self._connection_ok = True
@@ -2076,7 +2082,7 @@ class UsageFloater(tk.Tk):
         self.auto_row.set_percent(usage.auto_percent)
         self.api_row.set_percent(usage.api_percent)
         self._apply_grok_bot(self._last_grok_bot)
-        self._apply_antigravity(self._last_antigravity)
+        self._apply_antigravity(self._last_antigravity, self._antigravity_error)
         self._apply_codex(self._last_codex)
         self._update_pace_from_usage(usage)
         self._paint_status()
@@ -2095,11 +2101,22 @@ class UsageFloater(tk.Tk):
         self.grok_bot_row.set_percent(grok.usage_percent)
         self.grok_bot_row.set_subtext(_format_grok_bot_subtext(grok))
 
-    def _apply_antigravity(self, antigravity: AntigravityUsage | None) -> None:
+    def _apply_antigravity(
+        self,
+        antigravity: AntigravityUsage | None,
+        error: str | None = None,
+    ) -> None:
         if antigravity is None or not antigravity.is_eligible:
+            self.antigravity_row.set_percent(0)
+            self.antigravity_row.pct_label.configure(text="—%", fg=MUTED)
+            self.antigravity_row.set_subtext(error or "Waiting for Antigravity usage…")
             return
         self.antigravity_row.set_percent(antigravity.usage_percent)
-        self.antigravity_row.set_subtext(_format_antigravity_subtext(antigravity))
+        self.antigravity_row.set_subtext(
+            _format_antigravity_subtext(antigravity)
+            if not error
+            else f"Usage loaded; next refresh failed: {error}"
+        )
 
     def _apply_codex(self, codex: CodexUsage | None) -> None:
         if codex is None or not codex.is_eligible:
@@ -2198,13 +2215,15 @@ class UsageFloater(tk.Tk):
         message: str,
         antigravity: AntigravityUsage | None = None,
         antigravity_updated: bool = False,
+        antigravity_error: str | None = None,
         codex: CodexUsage | None = None,
         codex_updated: bool = False,
     ) -> None:
         self._connection_ok = False
         if antigravity_updated:
             self._last_antigravity = antigravity
-            self._apply_antigravity(self._last_antigravity)
+        self._antigravity_error = antigravity_error
+        self._apply_antigravity(self._last_antigravity, self._antigravity_error)
         if codex_updated:
             self._last_codex = codex
             self._apply_codex(self._last_codex)
