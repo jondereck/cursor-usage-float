@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 import threading
 import tkinter as tk
 from datetime import datetime, timedelta, timezone
@@ -35,6 +37,7 @@ from pacing import (
 )
 from settings import (
     AppSettings,
+    default_settings_path,
     effective_click_through,
     effective_pill_metric,
     ensure_usage_section_visible,
@@ -121,6 +124,68 @@ FADE_OUT_MS = 90
 FADE_IN_MS = 110
 FADE_FRAME_MS = 12
 APP_ICON = resource_path("assets", "app.ico")
+
+
+def _antigravity_cache_path() -> Path:
+    return default_settings_path().with_name("antigravity-usage.json")
+
+
+def _load_antigravity_cache() -> tuple[AntigravityUsage, datetime] | None:
+    try:
+        payload = json.loads(_antigravity_cache_path().read_text(encoding="utf-8"))
+        usage = payload["usage"]
+        updated_at = datetime.fromisoformat(payload["updated_at"])
+
+        def percent(value: object) -> float | None:
+            if value is None:
+                return None
+            number = float(value)
+            return number if math.isfinite(number) and 0 <= number <= 100 else None
+
+        usage_percent = percent(usage["usage_percent"])
+        if usage_percent is None:
+            return None
+        next_reset = usage.get("next_reset")
+        if next_reset is not None and not isinstance(next_reset, str):
+            return None
+        if updated_at.tzinfo is not None:
+            updated_at = updated_at.astimezone().replace(tzinfo=None)
+        return (
+            AntigravityUsage(
+                usage_percent=usage_percent,
+                gemini_percent=percent(usage.get("gemini_percent")),
+                claude_gpt_percent=percent(usage.get("claude_gpt_percent")),
+                next_reset=next_reset,
+                plan_name=None,
+                is_eligible=True,
+            ),
+            updated_at,
+        )
+    except (OSError, KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def _save_antigravity_cache(usage: AntigravityUsage, updated_at: datetime) -> None:
+    path = _antigravity_cache_path()
+    temporary = path.with_suffix(".tmp")
+    payload = {
+        "updated_at": updated_at.isoformat(),
+        "usage": {
+            "usage_percent": usage.usage_percent,
+            "gemini_percent": usage.gemini_percent,
+            "claude_gpt_percent": usage.claude_gpt_percent,
+            "next_reset": usage.next_reset,
+        },
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _rounded_rect_coords(
@@ -308,12 +373,22 @@ class UsageFloater(tk.Tk):
         self._drag_x = 0
         self._drag_y = 0
         self._refreshing = False
+        self._antigravity_retry_job: str | None = None
+        self._antigravity_retrying = False
         self._connection_ok: bool | None = None
         self._last_success_at: datetime | None = None
         self._last_usage: PlanUsage | None = None
         self._last_grok_bot: GrokBotUsage | None = None
-        self._last_antigravity: AntigravityUsage | None = None
-        self._antigravity_error: str | None = "Waiting for Antigravity usage…"
+        cached_antigravity = _load_antigravity_cache()
+        self._last_antigravity: AntigravityUsage | None = (
+            cached_antigravity[0] if cached_antigravity else None
+        )
+        self._last_antigravity_updated_at: datetime | None = (
+            cached_antigravity[1] if cached_antigravity else None
+        )
+        self._antigravity_error: str | None = (
+            "Checking for live usage…" if cached_antigravity else "Waiting for Antigravity usage…"
+        )
         self._last_codex: CodexUsage | None = None
         self._last_pace: PaceResult | None = None
         self._window_state = load_window_state()
@@ -343,6 +418,7 @@ class UsageFloater(tk.Tk):
         self.attributes("-topmost", bool(self.settings.always_on_top))
 
         self._build_ui()
+        self._apply_antigravity(self._last_antigravity, self._antigravity_error)
         self._tray = TrayIcon(
             self,
             tip="Cursor Usage",
@@ -1989,6 +2065,7 @@ class UsageFloater(tk.Tk):
     def refresh_async(self) -> None:
         if self._refreshing:
             return
+        self._cancel_antigravity_retry()
         self._refreshing = True
         self._start_pulse()
         if not self._show_pill_mode():
@@ -2055,6 +2132,54 @@ class UsageFloater(tk.Tk):
         self._refreshing = False
         self._stop_pulse()
         self._paint_status()
+        if self._antigravity_error:
+            self._schedule_antigravity_retry()
+
+    def _cancel_antigravity_retry(self) -> None:
+        if self._antigravity_retry_job is None:
+            return
+        try:
+            self.after_cancel(self._antigravity_retry_job)
+        except tk.TclError:
+            pass
+        self._antigravity_retry_job = None
+
+    def _schedule_antigravity_retry(self) -> None:
+        if self._antigravity_retry_job is None and not self._antigravity_retrying:
+            self._antigravity_retry_job = self.after(5_000, self._retry_antigravity)
+
+    def _retry_antigravity(self) -> None:
+        self._antigravity_retry_job = None
+        if not self.settings.show_antigravity:
+            return
+        if self._refreshing or self._antigravity_retrying:
+            self._schedule_antigravity_retry()
+            return
+        self._antigravity_retrying = True
+
+        def worker() -> None:
+            try:
+                usage = fetch_antigravity_usage()
+                error = None
+            except Exception as exc:  # noqa: BLE001
+                usage = None
+                error = str(exc).strip()[:160] or type(exc).__name__
+            self.after(0, lambda u=usage, e=error: self._apply_antigravity_retry(u, e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_antigravity_retry(
+        self,
+        usage: AntigravityUsage | None,
+        error: str | None,
+    ) -> None:
+        self._antigravity_retrying = False
+        self._record_antigravity(usage, updated=error is None, error=error)
+        self._update_pill_percent()
+        self._update_section_visibility()
+        self._resize_to_content()
+        if error:
+            self._schedule_antigravity_retry()
 
     def _apply_usage(
         self,
@@ -2070,9 +2195,11 @@ class UsageFloater(tk.Tk):
         self._last_usage = usage
         if grok_updated:
             self._last_grok_bot = grok
-        if antigravity_updated:
-            self._last_antigravity = antigravity
-        self._antigravity_error = antigravity_error
+        self._record_antigravity(
+            antigravity,
+            updated=antigravity_updated,
+            error=antigravity_error,
+        )
         if codex_updated:
             self._last_codex = codex
         self._connection_ok = True
@@ -2082,7 +2209,6 @@ class UsageFloater(tk.Tk):
         self.auto_row.set_percent(usage.auto_percent)
         self.api_row.set_percent(usage.api_percent)
         self._apply_grok_bot(self._last_grok_bot)
-        self._apply_antigravity(self._last_antigravity, self._antigravity_error)
         self._apply_codex(self._last_codex)
         self._update_pace_from_usage(usage)
         self._paint_status()
@@ -2112,11 +2238,31 @@ class UsageFloater(tk.Tk):
             self.antigravity_row.set_subtext(error or "Waiting for Antigravity usage…")
             return
         self.antigravity_row.set_percent(antigravity.usage_percent)
-        self.antigravity_row.set_subtext(
-            _format_antigravity_subtext(antigravity)
-            if not error
-            else f"Usage loaded; next refresh failed: {error}"
-        )
+        if error and self._last_antigravity_updated_at:
+            stamp = self._last_antigravity_updated_at.strftime("%I:%M %p").lstrip("0")
+            subtext = f"Saved {stamp} · {error}"
+        else:
+            subtext = _format_antigravity_subtext(antigravity)
+        self.antigravity_row.set_subtext(subtext)
+
+    def _record_antigravity(
+        self,
+        usage: AntigravityUsage | None,
+        *,
+        updated: bool,
+        error: str | None,
+    ) -> None:
+        if updated:
+            self._last_antigravity = usage
+            if usage is not None and usage.is_eligible:
+                self._last_antigravity_updated_at = datetime.now()
+                _save_antigravity_cache(usage, self._last_antigravity_updated_at)
+            else:
+                self._last_antigravity_updated_at = None
+        self._antigravity_error = error
+        self._apply_antigravity(self._last_antigravity, error)
+        if error is None:
+            self._cancel_antigravity_retry()
 
     def _apply_codex(self, codex: CodexUsage | None) -> None:
         if codex is None or not codex.is_eligible:
@@ -2220,10 +2366,11 @@ class UsageFloater(tk.Tk):
         codex_updated: bool = False,
     ) -> None:
         self._connection_ok = False
-        if antigravity_updated:
-            self._last_antigravity = antigravity
-        self._antigravity_error = antigravity_error
-        self._apply_antigravity(self._last_antigravity, self._antigravity_error)
+        self._record_antigravity(
+            antigravity,
+            updated=antigravity_updated,
+            error=antigravity_error,
+        )
         if codex_updated:
             self._last_codex = codex
             self._apply_codex(self._last_codex)
