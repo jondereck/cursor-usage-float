@@ -6,8 +6,10 @@ Small **always-on-top** floating window for Windows that shows your Cursor plan 
 - **Grok Bot** weekly % (separate allowance; Settings on/off)
 - **Antigravity** weekly % (Gemini & 3P model quotas; Settings on/off)
 - **Codex** % (OpenAI Codex / ChatGPT plan rate limits; Settings on/off)
+- **OpenCode** % of your daily token budget (read from OpenCode's local
+  session store; Settings on/off + budget)
 - Minimized **pill** shows Cursor icon + %; adds Grok Bot, Antigravity,
-  and Codex icons + % beside it when those toggles are on
+  Codex, and OpenCode icons + % beside it when those toggles are on
 - **Other Models** %
 - **Today's pace / soft-stop** — equal daily budget that automatically
   rebalances so usage lasts to the end of the billing cycle
@@ -50,8 +52,9 @@ Notes: first launch is a bit slower (the onefile bundle self-extracts), some ant
    and (best-effort) `…/GetSandUsageStatus` for **Grok Bot** weekly usage.
 3. Connects to the local **Antigravity** language server to read live model quotas (Gemini & 3P models).
 4. Reads **Codex** authentication from `~/.codex/auth.json` and fetches live rate limits & allowance from ChatGPT backend API.
-5. Draws the progress bars and refreshes about every **3 minutes** (↻ for manual refresh).
-4. Splits the start-of-day remaining allowance equally across the calendar
+5. Reads **OpenCode** usage from its local SQLite store (`~/.local/share/opencode/opencode.db`, today's tokens + cost) and scores it as a % of your daily token budget. No network call.
+6. Draws the progress bars and refreshes about every **3 minutes** (↻ for manual refresh).
+7. Splits the start-of-day remaining allowance equally across the calendar
    days through reset. Under-use carries forward and raises later daily
    budgets; over-use lowers them. Soft-stop states:
    - **OK** — under 80% of today’s fair share
@@ -96,11 +99,16 @@ Each PC still stores its own Sync folder path locally (Drive paths can differ).
 
 Progress bars shift color by urgency: calm under 70%, warn 70–90%, critical at 90%+.
 
+**OpenCode** has no plan-quota API (free models / prepaid credits), so its bar
+is `today's tokens ÷ your daily token budget` — set the budget in Settings →
+Appearance. Tokens are counted locally from `opencode.db`
+(input + output + reasoning + cache read/write) and reset at local midnight.
+
 ## Settings
 
 | Group | Options |
 |--------|---------|
-| **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, **Cursor Models** on/off, **Today's pace** on/off, **Grok Bot** on/off, **Antigravity** on/off, **Codex** on/off, reset countdown, stale badge |
+| **Appearance** | Density (`Full` / `Compact` / `Pill`), pill metric, header, **Cursor Models** on/off, **Today's pace** on/off, **Grok Bot** on/off, **Antigravity** on/off, **Codex** on/off, **OpenCode** on/off, OpenCode daily token budget (`5M` / `10M` / `20M` / `50M` / `100M`), reset countdown, stale badge |
 | **Behavior** | Always on top, click-through |
 | **Sync** | Shared folder for pace + settings, colored backup state, and last successful shared-folder write time |
 | **Startup** | Start with Windows (HKCU `Run` key `CursorUsageFloat`), Open hidden (pill) |

@@ -1,5 +1,21 @@
 # Dev log — cursor-usage-float
 
+## 2026-10-28
+
+### Done
+- **OpenCode** usage row + pill icon. No plan-quota API exists (free models
+  / prepaid credits), so usage is `today's tokens ÷ daily token budget`
+  (default 50M, dropdown 5M–100M in Settings).
+- `opencode_usage.py` reads `~/.local/share/opencode/opencode.db`
+  (`session_message` assistant tokens + cost) read-only, today only; falls
+  back to `opencode stats --days 0 --cost --json` from the bundled CLI.
+- Pill layout: OpenCode joins Cursor / Grok / Antigravity / Codex sections
+  (`show_opencode`, `opencode_text`); width math and renderer updated.
+- Settings: `show_opencode` switch, `opencode_token_budget` (re-scores the
+  cached row live when changed), pill metric option **OpenCode**.
+- Tests: `tests/test_opencode_usage.py` (aggregation, clamp, budget re-score,
+  token labels). 99 passing.
+
 ## 2026-10-12
 
 ### Done

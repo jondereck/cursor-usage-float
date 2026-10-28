@@ -21,6 +21,12 @@ from cursor_usage import (
 )
 from antigravity_usage import AntigravityUsage, fetch_antigravity_usage
 from codex_usage import CodexUsage, fetch_codex_usage
+from opencode_usage import (
+    OpenCodeUsage,
+    apply_budget,
+    fetch_opencode_usage,
+    format_token_count,
+)
 from paths import resource_path
 from pace_history import (
     active_pace_history_path,
@@ -390,6 +396,7 @@ class UsageFloater(tk.Tk):
             "Checking for live usage…" if cached_antigravity else "Waiting for Antigravity usage…"
         )
         self._last_codex: CodexUsage | None = None
+        self._last_opencode: OpenCodeUsage | None = None
         self._last_pace: PaceResult | None = None
         self._window_state = load_window_state()
         if self._window_state is not None:
@@ -525,6 +532,10 @@ class UsageFloater(tk.Tk):
         self.codex_row.configure(bg=CARD)
         # Packed only when show_codex and fetch is eligible.
 
+        self.opencode_row = ProgressRow(self.expanded, "OpenCode", hero=True)
+        self.opencode_row.configure(bg=CARD)
+        # Packed only when show_opencode and the local store is readable.
+
         # Daily pace / soft-stop (hero visual)
         self.pace_panel = tk.Frame(self.expanded, bg=CARD)
         self.pace_panel.pack(fill="x", pady=(12, 0))
@@ -653,11 +664,13 @@ class UsageFloater(tk.Tk):
             "show_grok": False,
             "show_antigravity": False,
             "show_codex": False,
+            "show_opencode": False,
             "text": "—%",
             "cursor_text": "—%",
             "grok_text": "—%",
             "antigravity_text": "—%",
             "codex_text": "—%",
+            "opencode_text": "—%",
             "number_color": TEXT,
             "ring_color": BAR_BG,
             "ring_extent": 0.0,
@@ -672,6 +685,7 @@ class UsageFloater(tk.Tk):
         self._pill_icon_grok: tk.PhotoImage | None = None
         self._pill_icon_antigravity: tk.PhotoImage | None = None
         self._pill_icon_codex: tk.PhotoImage | None = None
+        self._pill_icon_opencode: tk.PhotoImage | None = None
         try:
             self._pill_icon_cursor = tk.PhotoImage(
                 file=str(resource_path("assets", "cursor-mark.png"))
@@ -685,11 +699,15 @@ class UsageFloater(tk.Tk):
             self._pill_icon_codex = tk.PhotoImage(
                 file=str(resource_path("assets", "codex-mark.png"))
             )
+            self._pill_icon_opencode = tk.PhotoImage(
+                file=str(resource_path("assets", "opencode-mark.png"))
+            )
         except tk.TclError:
             self._pill_icon_cursor = None
             self._pill_icon_grok = None
             self._pill_icon_antigravity = None
             self._pill_icon_codex = None
+            self._pill_icon_opencode = None
         self.pill_face.bind("<Configure>", self._on_pill_configure)
         self.pill_face.bind("<ButtonPress-1>", self._start_drag)
         self.pill_face.bind("<B1-Motion>", self._on_drag)
@@ -779,6 +797,13 @@ class UsageFloater(tk.Tk):
         self._apply_layout(animate=True)
         if self._last_usage is not None:
             self._update_pace_from_usage(self._last_usage)
+        if self._last_opencode is not None:
+            rescored = apply_budget(
+                self._last_opencode, self.settings.opencode_token_budget
+            )
+            if rescored != self._last_opencode:
+                self._last_opencode = rescored
+                self._apply_opencode(rescored)
         self._refresh_status_text()
         self._update_pill_percent()
         self._update_section_visibility()
@@ -968,6 +993,7 @@ class UsageFloater(tk.Tk):
             self.grok_bot_row,
             self.antigravity_row,
             self.codex_row,
+            self.opencode_row,
             self.pace_panel,
             self.detail,
             self.reset_label,
@@ -1006,6 +1032,13 @@ class UsageFloater(tk.Tk):
 
         if self._codex_should_show():
             self.codex_row.pack(
+                fill="x",
+                pady=(12 if not first_section else (14 if self.settings.show_header else 0), 0),
+            )
+            first_section = False
+
+        if self._opencode_should_show():
+            self.opencode_row.pack(
                 fill="x",
                 pady=(12 if not first_section else (14 if self.settings.show_header else 0), 0),
             )
@@ -1057,6 +1090,14 @@ class UsageFloater(tk.Tk):
             and not self._show_pill_mode()
         )
 
+    def _opencode_should_show(self) -> bool:
+        return (
+            bool(self.settings.show_opencode)
+            and self._last_opencode is not None
+            and self._last_opencode.is_eligible
+            and not self._show_pill_mode()
+        )
+
     def _update_section_visibility(self) -> None:
         """Apply Total / Grok Bot / Antigravity / Codex / Today's pace on-off without full chrome rebuild."""
         if self._show_pill_mode():
@@ -1069,6 +1110,7 @@ class UsageFloater(tk.Tk):
         self._update_grok_bot_visibility()
         self._update_antigravity_visibility()
         self._update_codex_visibility()
+        self._update_opencode_visibility()
         self._update_pace_visibility()
 
     def _update_grok_bot_visibility(self) -> None:
@@ -1122,13 +1164,36 @@ class UsageFloater(tk.Tk):
         else:
             self.codex_row.pack_forget()
 
+    def _update_opencode_visibility(self) -> None:
+        if not hasattr(self, "opencode_row"):
+            return
+        show = self._opencode_should_show()
+        if show:
+            if not self.opencode_row.winfo_ismapped():
+                if self.codex_row.winfo_ismapped():
+                    self.opencode_row.pack(fill="x", pady=(12, 0), after=self.codex_row)
+                elif self.antigravity_row.winfo_ismapped():
+                    self.opencode_row.pack(fill="x", pady=(12, 0), after=self.antigravity_row)
+                elif self.grok_bot_row.winfo_ismapped():
+                    self.opencode_row.pack(fill="x", pady=(12, 0), after=self.grok_bot_row)
+                elif self.total_row.winfo_ismapped():
+                    self.opencode_row.pack(fill="x", pady=(12, 0), after=self.total_row)
+                elif self.header.winfo_ismapped():
+                    self.opencode_row.pack(fill="x", pady=(14, 0), after=self.header)
+                else:
+                    self.opencode_row.pack(fill="x", pady=(0, 0))
+        else:
+            self.opencode_row.pack_forget()
+
     def _update_pace_visibility(self) -> None:
         if not hasattr(self, "pace_panel"):
             return
         show = bool(self.settings.show_pace) and not self._show_pill_mode()
         if show:
             if not self.pace_panel.winfo_ismapped():
-                if self.codex_row.winfo_ismapped():
+                if self.opencode_row.winfo_ismapped():
+                    self.pace_panel.pack(fill="x", pady=(12, 0), after=self.opencode_row)
+                elif self.codex_row.winfo_ismapped():
                     self.pace_panel.pack(fill="x", pady=(12, 0), after=self.codex_row)
                 elif self.antigravity_row.winfo_ismapped():
                     self.pace_panel.pack(fill="x", pady=(12, 0), after=self.antigravity_row)
@@ -1261,6 +1326,14 @@ class UsageFloater(tk.Tk):
             and self._last_codex.is_eligible
         )
 
+    def _pill_opencode_half(self) -> bool:
+        """True when OpenCode usage should appear in the pill."""
+        return (
+            bool(self.settings.show_opencode)
+            and self._last_opencode is not None
+            and self._last_opencode.is_eligible
+        )
+
     def _pill_metrics(self) -> tuple[int, int, int, int]:
         """Return (width, height, text_w, badge_w) for compact capsule."""
         view = self._pill_view
@@ -1282,6 +1355,12 @@ class UsageFloater(tk.Tk):
             show_codex = bool(view.get("show_codex"))
             codex_w = (
                 font_nums.measure(str(view.get("codex_text") or "—%")) if show_codex else 0
+            )
+            show_opencode = bool(view.get("show_opencode"))
+            opencode_w = (
+                font_nums.measure(str(view.get("opencode_text") or "—%"))
+                if show_opencode
+                else 0
             )
             cue_w = 0
             cue = str(view.get("cue") or "")
@@ -1321,8 +1400,22 @@ class UsageFloater(tk.Tk):
                     + PILL_DUAL_ITEM_GAP
                     + codex_w
                 )
+            if show_opencode:
+                width += (
+                    PILL_DUAL_SECTION_GAP
+                    + 1  # divider
+                    + PILL_DUAL_SECTION_GAP
+                    + PILL_ICON
+                    + PILL_DUAL_ITEM_GAP
+                    + opencode_w
+                )
             width += cue_w + PILL_DUAL_PAD_X
-            return max(width, PILL_HEIGHT), PILL_HEIGHT, cursor_w + grok_w + anti_w + codex_w, 0
+            return (
+                max(width, PILL_HEIGHT),
+                PILL_HEIGHT,
+                cursor_w + grok_w + anti_w + codex_w + opencode_w,
+                0,
+            )
 
         text = str(view.get("text") or "—%")
         font_nums = tkfont.Font(family=PILL_NUM_FONT[0], size=PILL_NUM_FONT[1], weight="bold")
@@ -1548,6 +1641,42 @@ class UsageFloater(tk.Tk):
             )
             x += font_nums.measure(codex_text)
 
+        if view.get("show_opencode"):
+            x += PILL_DUAL_SECTION_GAP
+            # Divider
+            c.create_line(
+                x,
+                cy - PILL_DUAL_DIVIDER_H / 2,
+                x,
+                cy + PILL_DUAL_DIVIDER_H / 2,
+                fill=BORDER,
+                width=1,
+                tags="face",
+            )
+            x += 1 + PILL_DUAL_SECTION_GAP
+
+            # OpenCode
+            if self._pill_icon_opencode is not None:
+                c.create_image(
+                    x + PILL_ICON / 2,
+                    cy,
+                    image=self._pill_icon_opencode,
+                    anchor="center",
+                    tags="face",
+                )
+            x += PILL_ICON + PILL_DUAL_ITEM_GAP
+            opencode_text = str(view.get("opencode_text") or "—%")
+            c.create_text(
+                x,
+                cy,
+                text=opencode_text,
+                fill=color,
+                font=PILL_DUAL_NUM_FONT,
+                anchor="w",
+                tags="face",
+            )
+            x += font_nums.measure(opencode_text)
+
         cue = str(view.get("cue") or "")
         if cue:
             x += PILL_DUAL_SECTION_GAP
@@ -1661,20 +1790,44 @@ class UsageFloater(tk.Tk):
         if self._last_usage is None:
             show_anti = self._pill_antigravity_half()
             show_codex = self._pill_codex_half()
-            if (show_anti and self._last_antigravity is not None) or (show_codex and self._last_codex is not None):
-                anti_text = format_usage_percent(self._last_antigravity.usage_percent) if (show_anti and self._last_antigravity is not None) else "—%"
-                codex_text = format_usage_percent(self._last_codex.usage_percent) if (show_codex and self._last_codex is not None) else "—%"
-                primary_txt = anti_text if show_anti else codex_text
+            show_opencode = self._pill_opencode_half()
+            has_anti = show_anti and self._last_antigravity is not None
+            has_codex = show_codex and self._last_codex is not None
+            has_opencode = show_opencode and self._last_opencode is not None
+            if has_anti or has_codex or has_opencode:
+                anti_text = (
+                    format_usage_percent(self._last_antigravity.usage_percent)
+                    if has_anti
+                    else "—%"
+                )
+                codex_text = (
+                    format_usage_percent(self._last_codex.usage_percent)
+                    if has_codex
+                    else "—%"
+                )
+                opencode_text = (
+                    format_usage_percent(self._last_opencode.usage_percent)
+                    if has_opencode
+                    else "—%"
+                )
+                if has_anti:
+                    primary_txt = anti_text
+                elif has_codex:
+                    primary_txt = codex_text
+                else:
+                    primary_txt = opencode_text
                 view.update(
                     {
                         "layout": "icons",
                         "show_grok": False,
                         "show_antigravity": show_anti,
                         "show_codex": show_codex,
+                        "show_opencode": show_opencode,
                         "cursor_text": "—%",
                         "grok_text": "—%",
                         "antigravity_text": anti_text,
                         "codex_text": codex_text,
+                        "opencode_text": opencode_text,
                         "text": primary_txt,
                         "number_color": TEXT,
                         "ring_extent": 0.0,
@@ -1689,11 +1842,13 @@ class UsageFloater(tk.Tk):
                         "show_grok": False,
                         "show_antigravity": False,
                         "show_codex": False,
+                        "show_opencode": False,
                         "text": "—%",
                         "cursor_text": "—%",
                         "grok_text": "—%",
                         "antigravity_text": "—%",
                         "codex_text": "—%",
+                        "opencode_text": "—%",
                         "number_color": TEXT,
                         "ring_extent": 0.0,
                         "show_badge": False,
@@ -1706,11 +1861,12 @@ class UsageFloater(tk.Tk):
         show_grok = self._pill_grok_half()
         show_anti = self._pill_antigravity_half()
         show_codex = self._pill_codex_half()
+        show_opencode = self._pill_opencode_half()
         metric = effective_pill_metric(self.settings)
 
-        # Cursor icon+% always (Grok / Antigravity / Codex only when on). Pace ring only when
-        # pill metric is Today's pace and none is sharing the capsule.
-        if show_grok or show_anti or show_codex or metric != "pace":
+        # Cursor icon+% always (Grok / Antigravity / Codex / OpenCode only when on).
+        # Pace ring only when pill metric is Today's pace and none is sharing the capsule.
+        if show_grok or show_anti or show_codex or show_opencode or metric != "pace":
             grok_text = "—%"
             if show_grok and self._last_grok_bot is not None:
                 grok_text = format_usage_percent(self._last_grok_bot.usage_percent)
@@ -1720,6 +1876,9 @@ class UsageFloater(tk.Tk):
             codex_text = "—%"
             if show_codex and self._last_codex is not None:
                 codex_text = format_usage_percent(self._last_codex.usage_percent)
+            opencode_text = "—%"
+            if show_opencode and self._last_opencode is not None:
+                opencode_text = format_usage_percent(self._last_opencode.usage_percent)
             cursor_txt = format_usage_percent(self._last_usage.auto_percent)
             view.update(
                 {
@@ -1727,10 +1886,12 @@ class UsageFloater(tk.Tk):
                     "show_grok": show_grok,
                     "show_antigravity": show_anti,
                     "show_codex": show_codex,
+                    "show_opencode": show_opencode,
                     "cursor_text": cursor_txt,
                     "grok_text": grok_text,
                     "antigravity_text": anti_text,
                     "codex_text": codex_text,
+                    "opencode_text": opencode_text,
                     "text": cursor_txt,
                     "number_color": TEXT,
                     "ring_extent": 0.0,
@@ -1757,6 +1918,7 @@ class UsageFloater(tk.Tk):
                     "show_grok": False,
                     "show_antigravity": False,
                     "show_codex": False,
+                    "show_opencode": False,
                     "text": chrome.text,
                     "number_color": chrome.number_color,
                     "ring_color": chrome.ring_color,
@@ -1777,6 +1939,7 @@ class UsageFloater(tk.Tk):
                 "show_grok": False,
                 "show_antigravity": False,
                 "show_codex": False,
+                "show_opencode": False,
                 "text": "—%",
                 "number_color": TEXT,
                 "ring_extent": 0.0,
@@ -2070,6 +2233,7 @@ class UsageFloater(tk.Tk):
         self._start_pulse()
         if not self._show_pill_mode():
             self.status_label.configure(text="Refreshing…")
+        opencode_budget = int(self.settings.opencode_token_budget)
 
         def worker() -> None:
             usage: PlanUsage | None = None
@@ -2080,6 +2244,8 @@ class UsageFloater(tk.Tk):
             anti_error: str | None = None
             codex: CodexUsage | None = None
             codex_ok = False
+            opencode: OpenCodeUsage | None = None
+            opencode_ok = False
             cursor_error: str | None = None
 
             try:
@@ -2110,18 +2276,24 @@ class UsageFloater(tk.Tk):
             except Exception:  # noqa: BLE001
                 pass
 
+            try:
+                opencode = fetch_opencode_usage(opencode_budget)
+                opencode_ok = True
+            except Exception:  # noqa: BLE001
+                pass
+
             if usage is not None:
                 self.after(
                     0,
-                    lambda u=usage, g=grok, g_ok=grok_ok, a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok: self._apply_usage(
-                        u, grok=g, grok_updated=g_ok, antigravity=a, antigravity_updated=a_ok, antigravity_error=ae, codex=c, codex_updated=c_ok
+                    lambda u=usage, g=grok, g_ok=grok_ok, a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok, o=opencode, o_ok=opencode_ok: self._apply_usage(
+                        u, grok=g, grok_updated=g_ok, antigravity=a, antigravity_updated=a_ok, antigravity_error=ae, codex=c, codex_updated=c_ok, opencode=o, opencode_updated=o_ok
                     ),
                 )
             else:
                 self.after(
                     0,
-                    lambda m=cursor_error or "Cursor offline", a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok: self._apply_error(
-                        m, antigravity=a, antigravity_updated=a_ok, antigravity_error=ae, codex=c, codex_updated=c_ok
+                    lambda m=cursor_error or "Cursor offline", a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok, o=opencode, o_ok=opencode_ok: self._apply_error(
+                        m, antigravity=a, antigravity_updated=a_ok, antigravity_error=ae, codex=c, codex_updated=c_ok, opencode=o, opencode_updated=o_ok
                     ),
                 )
             self.after(0, self._clear_refreshing)
@@ -2191,6 +2363,8 @@ class UsageFloater(tk.Tk):
         antigravity_error: str | None = None,
         codex: CodexUsage | None = None,
         codex_updated: bool = True,
+        opencode: OpenCodeUsage | None = None,
+        opencode_updated: bool = True,
     ) -> None:
         self._last_usage = usage
         if grok_updated:
@@ -2202,6 +2376,8 @@ class UsageFloater(tk.Tk):
         )
         if codex_updated:
             self._last_codex = codex
+        if opencode_updated:
+            self._last_opencode = opencode
         self._connection_ok = True
         self._last_success_at = datetime.now()
         self.total_row.set_percent(usage.auto_percent)
@@ -2210,6 +2386,7 @@ class UsageFloater(tk.Tk):
         self.api_row.set_percent(usage.api_percent)
         self._apply_grok_bot(self._last_grok_bot)
         self._apply_codex(self._last_codex)
+        self._apply_opencode(self._last_opencode)
         self._update_pace_from_usage(usage)
         self._paint_status()
         self._update_pill_percent()
@@ -2269,6 +2446,12 @@ class UsageFloater(tk.Tk):
             return
         self.codex_row.set_percent(codex.usage_percent)
         self.codex_row.set_subtext(_format_codex_subtext(codex))
+
+    def _apply_opencode(self, opencode: OpenCodeUsage | None) -> None:
+        if opencode is None or not opencode.is_eligible:
+            return
+        self.opencode_row.set_percent(opencode.usage_percent)
+        self.opencode_row.set_subtext(_format_opencode_subtext(opencode))
 
     def _pace_history_path(self) -> Path:
         return active_pace_history_path(self.settings.pace_sync_folder)
@@ -2364,6 +2547,8 @@ class UsageFloater(tk.Tk):
         antigravity_error: str | None = None,
         codex: CodexUsage | None = None,
         codex_updated: bool = False,
+        opencode: OpenCodeUsage | None = None,
+        opencode_updated: bool = False,
     ) -> None:
         self._connection_ok = False
         self._record_antigravity(
@@ -2374,7 +2559,10 @@ class UsageFloater(tk.Tk):
         if codex_updated:
             self._last_codex = codex
             self._apply_codex(self._last_codex)
-        if antigravity_updated or codex_updated:
+        if opencode_updated:
+            self._last_opencode = opencode
+            self._apply_opencode(self._last_opencode)
+        if antigravity_updated or codex_updated or opencode_updated:
             self._update_pill_percent()
         if not self._show_pill_mode():
             self.status_label.configure(text=message)
@@ -2404,6 +2592,20 @@ def _parse_billing_end(raw: str) -> datetime | None:
         return datetime.fromtimestamp(num, tz=timezone.utc)
     except (TypeError, ValueError, OSError):
         return None
+
+
+def _format_opencode_subtext(opencode: OpenCodeUsage) -> str:
+    """Token-budget label: '15.6M / 20.0M tokens today · 2 sessions'."""
+    parts = [
+        f"{format_token_count(opencode.tokens_used)} / "
+        f"{format_token_count(opencode.budget_tokens)} tokens today"
+    ]
+    if opencode.sessions:
+        noun = "session" if opencode.sessions == 1 else "sessions"
+        parts.append(f"{opencode.sessions} {noun}")
+    if opencode.cost_usd > 0:
+        parts.append(f"${opencode.cost_usd:.2f}")
+    return " · ".join(parts)
 
 
 def _format_codex_subtext(codex: CodexUsage) -> str:

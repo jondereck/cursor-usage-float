@@ -49,7 +49,20 @@ METRIC_LABELS = {
     "grok": "Grok Bot",
     "antigravity": "Antigravity",
     "codex": "Codex",
+    "opencode": "OpenCode",
 }
+
+TOKEN_BUDGET_CHOICES = (
+    5_000_000,
+    10_000_000,
+    20_000_000,
+    50_000_000,
+    100_000_000,
+)
+
+
+def _budget_label(value: int) -> str:
+    return f"{value / 1_000_000:g}M tokens/day"
 
 
 class ToggleSwitch(tk.Canvas):
@@ -187,10 +200,12 @@ class SettingsWindow(tk.Toplevel):
             ("show_grok_bot", "Grok Bot"),
             ("show_antigravity", "Antigravity"),
             ("show_codex", "Codex"),
+            ("show_opencode", "OpenCode"),
             ("show_reset_countdown", "Reset countdown"),
             ("show_stale_badge", "Stale-data badge"),
         ):
             self._add_switch(appearance, label, attr)
+        self._add_token_budget_dropdown(appearance)
 
         behavior = self._section(outer, "Behavior")
         for attr, label in (
@@ -281,6 +296,47 @@ class SettingsWindow(tk.Toplevel):
 
         combo.bind("<<ComboboxSelected>>", on_select)
 
+    def _add_token_budget_dropdown(self, parent: tk.Misc) -> None:
+        row = tk.Frame(parent, bg=CARD)
+        row.pack(fill="x", pady=(0, 10))
+        tk.Label(
+            row,
+            text="OpenCode daily token budget",
+            bg=CARD,
+            fg=TEXT,
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill="x")
+
+        current = int(self.settings.opencode_token_budget)
+        choices = list(TOKEN_BUDGET_CHOICES)
+        if current not in choices:
+            choices.append(current)
+            choices.sort()
+
+        self._budget_values = choices
+        self._budget_var = tk.StringVar(value=_budget_label(current))
+        combo = ttk.Combobox(
+            row,
+            textvariable=self._budget_var,
+            values=[_budget_label(v) for v in choices],
+            state="readonly",
+            font=("Segoe UI", 9),
+        )
+        combo.pack(fill="x", pady=(4, 0))
+
+        def on_select(_event: object | None = None) -> None:
+            if self._updating:
+                return
+            label = self._budget_var.get()
+            for value in self._budget_values:
+                if _budget_label(value) == label:
+                    self.settings.opencode_token_budget = value
+                    break
+            self._persist()
+
+        combo.bind("<<ComboboxSelected>>", on_select)
+
     def _add_switch(self, parent: tk.Misc, label: str, attr: str) -> None:
         row = tk.Frame(parent, bg=CARD)
         row.pack(fill="x", pady=5)
@@ -301,7 +357,14 @@ class SettingsWindow(tk.Toplevel):
                 return
             enabled = bool(var.get())
             setattr(self.settings, attr, enabled)
-            if attr in ("show_total", "show_pace", "show_grok_bot", "show_antigravity", "show_codex"):
+            if attr in (
+                "show_total",
+                "show_pace",
+                "show_grok_bot",
+                "show_antigravity",
+                "show_codex",
+                "show_opencode",
+            ):
                 if attr in ("show_total", "show_pace"):
                     if not self.settings.show_total and not self.settings.show_pace:
                         # Keep at least one usage section visible.
@@ -486,6 +549,8 @@ class SettingsWindow(tk.Toplevel):
             self.settings.show_antigravity = True
         elif self.settings.minimized_metric == "codex":
             self.settings.show_codex = True
+        elif self.settings.minimized_metric == "opencode":
+            self.settings.show_opencode = True
         else:
             self.settings.show_total = True
         ensure_usage_section_visible(self.settings)
@@ -509,6 +574,10 @@ class SettingsWindow(tk.Toplevel):
             self._metric_var.set(settings.minimized_metric)
             for attr, var in self._bool_vars.items():
                 var.set(bool(getattr(settings, attr)))
+            if hasattr(self, "_budget_var"):
+                self._budget_var.set(
+                    _budget_label(int(settings.opencode_token_budget))
+                )
             if hasattr(self, "_sync_path_var"):
                 self._sync_path_var.set(self._sync_display(settings.pace_sync_folder))
         finally:

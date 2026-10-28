@@ -11,10 +11,21 @@ from typing import Any
 from cursor_usage import GrokBotUsage, PlanUsage
 from antigravity_usage import AntigravityUsage
 from codex_usage import CodexUsage
+from opencode_usage import DEFAULT_DAILY_TOKEN_BUDGET, OpenCodeUsage
 from sync_status import record_sync_error, record_sync_success
 
 DENSITY_OPTIONS = ("full", "compact", "minimal")
-METRIC_OPTIONS = ("total", "auto", "api", "worst", "pace", "grok", "antigravity", "codex")
+METRIC_OPTIONS = (
+    "total",
+    "auto",
+    "api",
+    "worst",
+    "pace",
+    "grok",
+    "antigravity",
+    "codex",
+    "opencode",
+)
 
 
 @dataclass
@@ -30,6 +41,10 @@ class AppSettings:
     show_grok_bot: bool = True
     show_antigravity: bool = True
     show_codex: bool = True
+    show_opencode: bool = True
+    # OpenCode publishes no plan quota, so usage is a % of this daily token
+    # allowance (input + output + reasoning + cache tokens).
+    opencode_token_budget: int = DEFAULT_DAILY_TOKEN_BUDGET
     minimized_metric: str = "pace"  # total | auto | api | worst | pace | grok
     start_minimized: bool = False  # open hidden (pill) on launch
     start_with_windows: bool = False
@@ -71,6 +86,10 @@ def _normalize(data: dict[str, Any]) -> AppSettings:
         values["density"] = defaults.density
     if values["minimized_metric"] not in METRIC_OPTIONS:
         values["minimized_metric"] = defaults.minimized_metric
+    if isinstance(values["opencode_token_budget"], bool) or (
+        values["opencode_token_budget"] < 100_000
+    ):
+        values["opencode_token_budget"] = defaults.opencode_token_budget
     settings = AppSettings(**values)
     ensure_usage_section_visible(settings)
     return settings
@@ -88,8 +107,11 @@ def ensure_usage_section_visible(settings: AppSettings) -> AppSettings:
         settings.minimized_metric = "total" if settings.show_total else "pace"
     elif settings.minimized_metric == "codex" and not settings.show_codex:
         settings.minimized_metric = "total" if settings.show_total else "pace"
+    elif settings.minimized_metric == "opencode" and not settings.show_opencode:
+        settings.minimized_metric = "total" if settings.show_total else "pace"
     elif (
-        settings.minimized_metric not in ("pace", "grok", "antigravity", "codex")
+        settings.minimized_metric
+        not in ("pace", "grok", "antigravity", "codex", "opencode")
         and not settings.show_total
         and settings.show_pace
     ):
@@ -119,6 +141,12 @@ def effective_pill_metric(settings: AppSettings) -> str:
     if metric == "codex":
         if settings.show_codex:
             return "codex"
+        if settings.show_pace:
+            return "pace"
+        return "total"
+    if metric == "opencode":
+        if settings.show_opencode:
+            return "opencode"
         if settings.show_pace:
             return "pace"
         return "total"
@@ -207,6 +235,7 @@ def resolve_minimized_percent(
     grok: GrokBotUsage | None = None,
     antigravity: AntigravityUsage | None = None,
     codex: CodexUsage | None = None,
+    opencode: OpenCodeUsage | None = None,
 ) -> float:
     if metric == "auto":
         return usage.auto_percent
@@ -225,6 +254,10 @@ def resolve_minimized_percent(
     if metric == "codex":
         if codex is not None and codex.is_eligible:
             return codex.usage_percent
+        return usage.auto_percent
+    if metric == "opencode":
+        if opencode is not None and opencode.is_eligible:
+            return opencode.usage_percent
         return usage.auto_percent
     # "total" and "pace" fallback: Cursor Models pool (dashboard primary bar)
     return usage.auto_percent
