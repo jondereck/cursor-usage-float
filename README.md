@@ -46,7 +46,9 @@ Notes: first launch is a bit slower (the onefile bundle self-extracts), some ant
 ## How it works
 
 1. Reads your Cursor access token from the local SQLite DB:  
-   `%APPDATA%\Cursor\User\globalStorage\state.vscdb`
+   `%APPDATA%\Cursor\User\globalStorage\state.vscdb`  
+   (Cursor 3.27+ may seal it as `cursor-safe-storage:v1:`; on Windows the
+   floater decrypts it with Cursor’s Local State OSCrypt key via DPAPI.)
 2. Calls Cursor’s HTTPS usage endpoints:  
    `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`  
    and (best-effort) `…/GetSandUsageStatus` for **Grok Bot** weekly usage.
@@ -99,10 +101,11 @@ Each PC still stores its own Sync folder path locally (Drive paths can differ).
 
 Progress bars shift color by urgency: calm under 70%, warn 70–90%, critical at 90%+.
 
-**OpenCode** has no plan-quota API (free models / prepaid credits), so its bar
-is `today's tokens ÷ your daily token budget` — set the budget in Settings →
-Appearance. Tokens are counted locally from `opencode.db`
-(input + output + reasoning + cache read/write) and reset at local midnight.
+**OpenCode** has no readable free-token allowance in the local app. Zen free
+limits are request/IP based on their servers (dynamic — not a fixed daily
+token number we can auto-fill), so the bar is `today's tokens ÷ your daily
+token budget` — a personal pace target in Settings → Appearance. Tokens are
+counted locally from `opencode.db` and reset at local midnight.
 
 ## Settings
 

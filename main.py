@@ -661,6 +661,7 @@ class UsageFloater(tk.Tk):
         self._pill_border_color = CARD
         self._pill_view: dict[str, object] = {
             "layout": "ring",  # ring | icons
+            "show_cursor": False,
             "show_grok": False,
             "show_antigravity": False,
             "show_codex": False,
@@ -1343,7 +1344,12 @@ class UsageFloater(tk.Tk):
                 size=PILL_DUAL_NUM_FONT[1],
                 weight="bold",
             )
-            cursor_w = font_nums.measure(str(view.get("cursor_text") or "—%"))
+            show_cursor = bool(view.get("show_cursor"))
+            cursor_w = (
+                font_nums.measure(str(view.get("cursor_text") or "—%"))
+                if show_cursor
+                else 0
+            )
             show_grok = bool(view.get("show_grok"))
             grok_w = (
                 font_nums.measure(str(view.get("grok_text") or "—%")) if show_grok else 0
@@ -1367,48 +1373,31 @@ class UsageFloater(tk.Tk):
             if cue:
                 font_cue = tkfont.Font(family="Segoe UI", size=7, weight="bold")
                 cue_w = font_cue.measure(cue) + PILL_DUAL_SECTION_GAP
-            width = (
-                PILL_DUAL_PAD_X
-                + PILL_ICON
-                + PILL_DUAL_ITEM_GAP
-                + cursor_w
+            sections = sum(
+                1 for on in (show_cursor, show_grok, show_anti, show_codex, show_opencode) if on
             )
+            width = PILL_DUAL_PAD_X
+            first = True
+
+            def _add_section(text_w: int) -> None:
+                nonlocal width, first
+                if not first:
+                    width += PILL_DUAL_SECTION_GAP + 1 + PILL_DUAL_SECTION_GAP
+                width += PILL_ICON + PILL_DUAL_ITEM_GAP + text_w
+                first = False
+
+            if show_cursor:
+                _add_section(cursor_w)
             if show_grok:
-                width += (
-                    PILL_DUAL_SECTION_GAP
-                    + 1  # divider
-                    + PILL_DUAL_SECTION_GAP
-                    + PILL_ICON
-                    + PILL_DUAL_ITEM_GAP
-                    + grok_w
-                )
+                _add_section(grok_w)
             if show_anti:
-                width += (
-                    PILL_DUAL_SECTION_GAP
-                    + 1  # divider
-                    + PILL_DUAL_SECTION_GAP
-                    + PILL_ICON
-                    + PILL_DUAL_ITEM_GAP
-                    + anti_w
-                )
+                _add_section(anti_w)
             if show_codex:
-                width += (
-                    PILL_DUAL_SECTION_GAP
-                    + 1  # divider
-                    + PILL_DUAL_SECTION_GAP
-                    + PILL_ICON
-                    + PILL_DUAL_ITEM_GAP
-                    + codex_w
-                )
+                _add_section(codex_w)
             if show_opencode:
-                width += (
-                    PILL_DUAL_SECTION_GAP
-                    + 1  # divider
-                    + PILL_DUAL_SECTION_GAP
-                    + PILL_ICON
-                    + PILL_DUAL_ITEM_GAP
-                    + opencode_w
-                )
+                _add_section(opencode_w)
+            if sections == 0:
+                width += PILL_ICON + PILL_DUAL_ITEM_GAP + font_nums.measure("—%")
             width += cue_w + PILL_DUAL_PAD_X
             return (
                 max(width, PILL_HEIGHT),
@@ -1510,172 +1499,73 @@ class UsageFloater(tk.Tk):
         )
         x = float(PILL_DUAL_PAD_X)
         color = str(view.get("number_color") or TEXT)
+        first = True
 
-        # Cursor Models (always in icons layout)
-        if self._pill_icon_cursor is not None:
-            c.create_image(
-                x + PILL_ICON / 2,
+        def _divider_then_icon_pct(
+            icon: tk.PhotoImage | None, text: str
+        ) -> None:
+            nonlocal x, first
+            if not first:
+                x += PILL_DUAL_SECTION_GAP
+                c.create_line(
+                    x,
+                    cy - PILL_DUAL_DIVIDER_H / 2,
+                    x,
+                    cy + PILL_DUAL_DIVIDER_H / 2,
+                    fill=BORDER,
+                    width=1,
+                    tags="face",
+                )
+                x += 1 + PILL_DUAL_SECTION_GAP
+            if icon is not None:
+                c.create_image(
+                    x + PILL_ICON / 2,
+                    cy,
+                    image=icon,
+                    anchor="center",
+                    tags="face",
+                )
+            x += PILL_ICON + PILL_DUAL_ITEM_GAP
+            c.create_text(
+                x,
                 cy,
-                image=self._pill_icon_cursor,
-                anchor="center",
+                text=text,
+                fill=color,
+                font=PILL_DUAL_NUM_FONT,
+                anchor="w",
                 tags="face",
             )
-        x += PILL_ICON + PILL_DUAL_ITEM_GAP
-        cursor_text = str(view.get("cursor_text") or "—%")
-        c.create_text(
-            x,
-            cy,
-            text=cursor_text,
-            fill=color,
-            font=PILL_DUAL_NUM_FONT,
-            anchor="w",
-            tags="face",
-        )
-        x += font_nums.measure(cursor_text)
+            x += font_nums.measure(text)
+            first = False
 
+        if view.get("show_cursor"):
+            _divider_then_icon_pct(
+                self._pill_icon_cursor,
+                str(view.get("cursor_text") or "—%"),
+            )
         if view.get("show_grok"):
-            x += PILL_DUAL_SECTION_GAP
-            # Divider
-            c.create_line(
-                x,
-                cy - PILL_DUAL_DIVIDER_H / 2,
-                x,
-                cy + PILL_DUAL_DIVIDER_H / 2,
-                fill=BORDER,
-                width=1,
-                tags="face",
+            _divider_then_icon_pct(
+                self._pill_icon_grok,
+                str(view.get("grok_text") or "—%"),
             )
-            x += 1 + PILL_DUAL_SECTION_GAP
-
-            # Grok Bot
-            if self._pill_icon_grok is not None:
-                c.create_image(
-                    x + PILL_ICON / 2,
-                    cy,
-                    image=self._pill_icon_grok,
-                    anchor="center",
-                    tags="face",
-                )
-            x += PILL_ICON + PILL_DUAL_ITEM_GAP
-            grok_text = str(view.get("grok_text") or "—%")
-            c.create_text(
-                x,
-                cy,
-                text=grok_text,
-                fill=color,
-                font=PILL_DUAL_NUM_FONT,
-                anchor="w",
-                tags="face",
-            )
-            x += font_nums.measure(grok_text)
-
         if view.get("show_antigravity"):
-            x += PILL_DUAL_SECTION_GAP
-            # Divider
-            c.create_line(
-                x,
-                cy - PILL_DUAL_DIVIDER_H / 2,
-                x,
-                cy + PILL_DUAL_DIVIDER_H / 2,
-                fill=BORDER,
-                width=1,
-                tags="face",
+            _divider_then_icon_pct(
+                self._pill_icon_antigravity,
+                str(view.get("antigravity_text") or "—%"),
             )
-            x += 1 + PILL_DUAL_SECTION_GAP
-
-            # Antigravity
-            if self._pill_icon_antigravity is not None:
-                c.create_image(
-                    x + PILL_ICON / 2,
-                    cy,
-                    image=self._pill_icon_antigravity,
-                    anchor="center",
-                    tags="face",
-                )
-            x += PILL_ICON + PILL_DUAL_ITEM_GAP
-            anti_text = str(view.get("antigravity_text") or "—%")
-            c.create_text(
-                x,
-                cy,
-                text=anti_text,
-                fill=color,
-                font=PILL_DUAL_NUM_FONT,
-                anchor="w",
-                tags="face",
-            )
-            x += font_nums.measure(anti_text)
-
         if view.get("show_codex"):
-            x += PILL_DUAL_SECTION_GAP
-            # Divider
-            c.create_line(
-                x,
-                cy - PILL_DUAL_DIVIDER_H / 2,
-                x,
-                cy + PILL_DUAL_DIVIDER_H / 2,
-                fill=BORDER,
-                width=1,
-                tags="face",
+            _divider_then_icon_pct(
+                self._pill_icon_codex,
+                str(view.get("codex_text") or "—%"),
             )
-            x += 1 + PILL_DUAL_SECTION_GAP
-
-            # Codex
-            if self._pill_icon_codex is not None:
-                c.create_image(
-                    x + PILL_ICON / 2,
-                    cy,
-                    image=self._pill_icon_codex,
-                    anchor="center",
-                    tags="face",
-                )
-            x += PILL_ICON + PILL_DUAL_ITEM_GAP
-            codex_text = str(view.get("codex_text") or "—%")
-            c.create_text(
-                x,
-                cy,
-                text=codex_text,
-                fill=color,
-                font=PILL_DUAL_NUM_FONT,
-                anchor="w",
-                tags="face",
-            )
-            x += font_nums.measure(codex_text)
-
         if view.get("show_opencode"):
-            x += PILL_DUAL_SECTION_GAP
-            # Divider
-            c.create_line(
-                x,
-                cy - PILL_DUAL_DIVIDER_H / 2,
-                x,
-                cy + PILL_DUAL_DIVIDER_H / 2,
-                fill=BORDER,
-                width=1,
-                tags="face",
+            _divider_then_icon_pct(
+                self._pill_icon_opencode,
+                str(view.get("opencode_text") or "—%"),
             )
-            x += 1 + PILL_DUAL_SECTION_GAP
-
-            # OpenCode
-            if self._pill_icon_opencode is not None:
-                c.create_image(
-                    x + PILL_ICON / 2,
-                    cy,
-                    image=self._pill_icon_opencode,
-                    anchor="center",
-                    tags="face",
-                )
-            x += PILL_ICON + PILL_DUAL_ITEM_GAP
-            opencode_text = str(view.get("opencode_text") or "—%")
-            c.create_text(
-                x,
-                cy,
-                text=opencode_text,
-                fill=color,
-                font=PILL_DUAL_NUM_FONT,
-                anchor="w",
-                tags="face",
-            )
-            x += font_nums.measure(opencode_text)
+        if first:
+            # Nothing eligible yet — keep a compact placeholder.
+            _divider_then_icon_pct(self._pill_icon_cursor, "—%")
 
         cue = str(view.get("cue") or "")
         if cue:
@@ -1819,6 +1709,7 @@ class UsageFloater(tk.Tk):
                 view.update(
                     {
                         "layout": "icons",
+                        "show_cursor": False,
                         "show_grok": False,
                         "show_antigravity": show_anti,
                         "show_codex": show_codex,
@@ -1839,6 +1730,7 @@ class UsageFloater(tk.Tk):
                 view.update(
                     {
                         "layout": "ring",
+                        "show_cursor": False,
                         "show_grok": False,
                         "show_antigravity": False,
                         "show_codex": False,
@@ -1864,7 +1756,7 @@ class UsageFloater(tk.Tk):
         show_opencode = self._pill_opencode_half()
         metric = effective_pill_metric(self.settings)
 
-        # Cursor icon+% always (Grok / Antigravity / Codex / OpenCode only when on).
+        # Cursor icon+% when online (Grok / Antigravity / Codex / OpenCode only when on).
         # Pace ring only when pill metric is Today's pace and none is sharing the capsule.
         if show_grok or show_anti or show_codex or show_opencode or metric != "pace":
             grok_text = "—%"
@@ -1883,6 +1775,7 @@ class UsageFloater(tk.Tk):
             view.update(
                 {
                     "layout": "icons",
+                    "show_cursor": True,
                     "show_grok": show_grok,
                     "show_antigravity": show_anti,
                     "show_codex": show_codex,
@@ -1915,6 +1808,7 @@ class UsageFloater(tk.Tk):
             view.update(
                 {
                     "layout": "ring",
+                    "show_cursor": False,
                     "show_grok": False,
                     "show_antigravity": False,
                     "show_codex": False,
@@ -1936,6 +1830,7 @@ class UsageFloater(tk.Tk):
         view.update(
             {
                 "layout": "ring",
+                "show_cursor": False,
                 "show_grok": False,
                 "show_antigravity": False,
                 "show_codex": False,
@@ -2412,7 +2307,10 @@ class UsageFloater(tk.Tk):
         if antigravity is None or not antigravity.is_eligible:
             self.antigravity_row.set_percent(0)
             self.antigravity_row.pct_label.configure(text="—%", fg=MUTED)
-            self.antigravity_row.set_subtext(error or "Waiting for Antigravity usage…")
+            detail = error or "Waiting for Antigravity usage…"
+            if error and "language_server" in error.lower():
+                detail = "Open Antigravity so its language server is running"
+            self.antigravity_row.set_subtext(detail)
             return
         self.antigravity_row.set_percent(antigravity.usage_percent)
         if error and self._last_antigravity_updated_at:
@@ -2562,6 +2460,13 @@ class UsageFloater(tk.Tk):
         if opencode_updated:
             self._last_opencode = opencode
             self._apply_opencode(self._last_opencode)
+        # Cursor auth/offline — keep prior bars if any, but don't invent a %.
+        self.total_row.set_percent(0)
+        self.total_row.pct_label.configure(text="—%", fg=MUTED)
+        if "auth" in message.lower() or "not logged" in message.lower() or "unauthenticated" in message.lower():
+            self.total_row.set_subtext("Sign in to Cursor, then refresh")
+        else:
+            self.total_row.set_subtext(message[:80])
         if antigravity_updated or codex_updated or opencode_updated:
             self._update_pill_percent()
         if not self._show_pill_mode():

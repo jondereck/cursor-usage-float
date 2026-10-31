@@ -307,6 +307,16 @@ class SettingsWindow(tk.Toplevel):
             font=("Segoe UI", 9),
             anchor="w",
         ).pack(fill="x")
+        tk.Label(
+            row,
+            text="Personal target only — OpenCode free quota is request/IP based and not readable as tokens.",
+            bg=CARD,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+            anchor="w",
+            wraplength=280,
+            justify="left",
+        ).pack(fill="x", pady=(2, 0))
 
         current = int(self.settings.opencode_token_budget)
         choices = list(TOKEN_BUDGET_CHOICES)

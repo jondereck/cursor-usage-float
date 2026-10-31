@@ -1,5 +1,18 @@
 # Dev log — cursor-usage-float
 
+## 2026-10-31
+
+### Done
+- Cursor 3.27+ stores `cursorAuth/accessToken` as
+  `cursor-safe-storage:v1:` (Electron safeStorage). Sending that ciphertext as
+  Bearer caused HTTP 401 `ERROR_NOT_LOGGED_IN` even while the IDE was signed in.
+- `cursor_auth.py` now decrypts the envelope on Windows via Local State
+  `os_crypt.encrypted_key` (DPAPI) + AES-256-GCM (`cryptography`). Plain JWTs
+  still pass through unchanged.
+- Pill: Cursor icon/% only when Cursor usage is online; clearer Auth /
+  Antigravity “open the app” subtexts. OpenCode budget help text notes free
+  Zen quota is not an auto-readable token allowance.
+
 ## 2026-10-28
 
 ### Done
