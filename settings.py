@@ -27,6 +27,9 @@ METRIC_OPTIONS = (
     "opencode",
 )
 
+# Never copied to the shared sync folder (tokens / per-PC paths).
+LOCAL_ONLY_SETTINGS = ("secondary_cursor_token_file",)
+
 
 @dataclass
 class AppSettings:
@@ -53,6 +56,11 @@ class AppSettings:
     pace_sync_folder: str = ""
     # What's New: last release the user acknowledged (see version.json).
     last_seen_version: str = ""
+    # Second Cursor account bar (token read from local file, not live login).
+    show_dual_cursor: bool = False
+    cursor_primary_label: str = ""
+    cursor_secondary_label: str = ""
+    secondary_cursor_token_file: str = ""
 
 
 def default_settings_path() -> Path:
@@ -172,10 +180,19 @@ def _read_settings_file(settings_path: Path) -> AppSettings:
     return _normalize(payload)
 
 
-def _write_settings_file(settings_path: Path, settings: AppSettings) -> None:
+def _write_settings_file(
+    settings_path: Path,
+    settings: AppSettings,
+    *,
+    for_sync: bool = False,
+) -> None:
     settings_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = asdict(settings)
+    if for_sync:
+        for key in LOCAL_ONLY_SETTINGS:
+            payload.pop(key, None)
     settings_path.write_text(
-        json.dumps(asdict(settings), indent=2) + "\n",
+        json.dumps(payload, indent=2) + "\n",
         encoding="utf-8",
     )
 
@@ -199,6 +216,8 @@ def load_settings(path: Path | None = None) -> AppSettings:
 
     synced = _read_settings_file(shared_path)
     synced.pace_sync_folder = local.pace_sync_folder
+    for key in LOCAL_ONLY_SETTINGS:
+        setattr(synced, key, getattr(local, key))
     return synced
 
 
@@ -217,7 +236,7 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
     shared_path = resolve_sync_settings_path(settings.pace_sync_folder)
     if shared_path is not None:
         try:
-            _write_settings_file(shared_path, settings)
+            _write_settings_file(shared_path, settings, for_sync=True)
             record_sync_success()
         except OSError as exc:
             # Google Drive / OneDrive can be offline or expose a temporarily
@@ -288,3 +307,13 @@ def format_usage_percent(value: float) -> str:
 def effective_click_through(click_through: bool, settings_open: bool) -> bool:
     """Click-through is soft-disabled while Settings is open."""
     return bool(click_through) and not bool(settings_open)
+
+
+def cursor_primary_bar_label(settings: AppSettings) -> str:
+    label = (settings.cursor_primary_label or "").strip()
+    return label or "Cursor Models"
+
+
+def cursor_secondary_bar_label(settings: AppSettings) -> str:
+    label = (settings.cursor_secondary_label or "").strip()
+    return label or "Cursor Models (2)"

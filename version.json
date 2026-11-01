@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "date": "2026-11-01",
-  "title": "Multi-pool usage floater with grant-based Cursor %, Grok Bot, and sealed-token auth fix"
+  "title": "Dual Cursor account bars via a local saved token file"
 }

@@ -9,6 +9,7 @@ import pytest
 from cursor_auth import (
     SAFE_STORAGE_PREFIX,
     AuthError,
+    read_access_token_from_file,
     resolve_access_token,
 )
 
@@ -16,6 +17,12 @@ from cursor_auth import (
 def test_resolve_plain_jwt_passthrough() -> None:
     token = "aaa.bbb.ccc"
     assert resolve_access_token(token) == token
+
+
+def test_read_access_token_from_file(tmp_path) -> None:
+    path = tmp_path / "token.txt"
+    path.write_text("aaa.bbb.ccc\n", encoding="utf-8")
+    assert read_access_token_from_file(path) == "aaa.bbb.ccc"
 
 
 def test_resolve_empty_raises() -> None:

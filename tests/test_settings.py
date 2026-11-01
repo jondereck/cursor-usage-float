@@ -371,7 +371,13 @@ def test_save_settings_writes_shared_copy(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("settings.default_settings_path", lambda: local)
 
     save_settings(
-        AppSettings(pace_sync_folder=str(sync_dir), density="minimal", show_pace=False)
+        AppSettings(
+            pace_sync_folder=str(sync_dir),
+            density="minimal",
+            show_pace=False,
+            show_dual_cursor=True,
+            secondary_cursor_token_file="C:\\secret\\cursor-b.txt",
+        )
     )
     assert local.is_file()
     shared = sync_dir / "settings.json"
@@ -379,12 +385,19 @@ def test_save_settings_writes_shared_copy(tmp_path: Path, monkeypatch) -> None:
     shared_data = json.loads(shared.read_text(encoding="utf-8"))
     assert shared_data["density"] == "minimal"
     assert shared_data["show_pace"] is False
+    assert shared_data["show_dual_cursor"] is True
+    assert "secondary_cursor_token_file" not in shared_data
 
-    # Reload picks shared values with local folder path
+    local_data = json.loads(local.read_text(encoding="utf-8"))
+    assert local_data["secondary_cursor_token_file"] == "C:\\secret\\cursor-b.txt"
+
+    # Reload picks shared values with local folder path and local-only token path
     loaded = load_settings()
     assert loaded.density == "minimal"
     assert loaded.show_pace is False
     assert loaded.pace_sync_folder == str(sync_dir)
+    assert loaded.show_dual_cursor is True
+    assert loaded.secondary_cursor_token_file == "C:\\secret\\cursor-b.txt"
 
 
 def test_save_settings_keeps_local_copy_when_sync_folder_unavailable(
@@ -413,10 +426,10 @@ def test_save_settings_reports_shared_write_error_and_recovery(
     monkeypatch.setattr("settings.default_settings_path", lambda: local)
     real_write = settings_module._write_settings_file
 
-    def fail_shared(path: Path, app_settings: AppSettings) -> None:
+    def fail_shared(path: Path, app_settings: AppSettings, **kwargs: object) -> None:
         if path.parent == sync_dir:
             raise PermissionError("Permission denied")
-        real_write(path, app_settings)
+        real_write(path, app_settings, **kwargs)
 
     record_sync_success()
     monkeypatch.setattr(settings_module, "_write_settings_file", fail_shared)

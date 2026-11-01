@@ -128,6 +128,20 @@ Same idea as JonOS: bump `version.json` (version, date, title), prepend a sectio
 in Settings and the tray until you tap **Got it** (stored as `last_seen_version` in
 `%APPDATA%\cursor-usage-float\settings.json`).
 
+### Two Cursor accounts (dual bar)
+
+Cursor only keeps **one** active login in the IDE. To watch a second subscription
+at the same time:
+
+1. Settings → **Cursor accounts** → turn on **Second account bar** and pick a
+   **token file** path (stored on this PC only — not synced).
+2. In Cursor, sign into your **other** account → **Save current Cursor login to
+   file**.
+3. Sign back into your **main** account in Cursor.
+
+The top bar follows the live login; the second bar uses the saved token until you
+re-export it.
+
 ## Dev tests
 
 ```bat

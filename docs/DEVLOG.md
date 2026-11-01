@@ -3,6 +3,9 @@
 ## 2026-11-01
 
 ### Done
+- **Dual Cursor account bars** — second bar from a local token file; export while
+  signed into the other account (Settings → Cursor accounts). Token path is
+  local-only (not synced to Drive).
 - **Version + What's New** (JonOS-style): `version.json` + `CHANGELOG.md`,
   unread ● until **Got it** (`last_seen_version` in settings). Footer in
   Settings; tray menu entry. Bump `version.json` when shipping notes.

@@ -213,3 +213,23 @@ def get_access_token(db_path: Path | None = None) -> str:
         raise AuthError("No Cursor access token found. Sign in to Cursor first.")
 
     return resolve_access_token(str(row[0]))
+
+
+def read_access_token_from_file(path: str | Path) -> str:
+    """Load a bearer token saved as plain JWT or cursor-safe-storage envelope."""
+    file_path = Path(path).expanduser()
+    if not file_path.is_file():
+        raise AuthError(f"Secondary token file not found: {file_path}")
+    try:
+        raw = file_path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        raise AuthError(f"Could not read secondary token file: {exc}") from exc
+    return resolve_access_token(raw)
+
+
+def export_access_token_to_file(dest: str | Path, db_path: Path | None = None) -> None:
+    """Write the active Cursor login token to a local file (plain JWT)."""
+    file_path = Path(dest).expanduser()
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    token = get_access_token(db_path)
+    file_path.write_text(token + "\n", encoding="utf-8")

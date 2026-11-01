@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable
-from tkinter import filedialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from app_version import format_version_footer, whats_new_unread
+from cursor_auth import AuthError, export_access_token_to_file
 from pace_history import apply_pace_sync_folder
 from paths import resource_path
 from settings import (
@@ -285,6 +286,10 @@ class SettingsWindow(tk.Toplevel):
         ):
             self._add_switch(startup, label, attr)
 
+        accounts = self._section(body, "Cursor accounts")
+        self._add_switch(accounts, "Second account bar", "show_dual_cursor")
+        self._add_dual_cursor_rows(accounts)
+
         self._footer = tk.Frame(outer, bg=BG)
         self._footer.pack(fill="x", pady=(12, 0))
         self._refresh_footer()
@@ -459,6 +464,149 @@ class SettingsWindow(tk.Toplevel):
             self._persist()
 
         ToggleSwitch(row, var, command=on_toggle).pack(side="right")
+
+    def _add_dual_cursor_rows(self, parent: tk.Misc) -> None:
+        tk.Label(
+            parent,
+            text=(
+                "Top bar = whoever is signed into Cursor now. Second bar reads a "
+                "token file on this PC only (not synced). Sign into the other "
+                "account, save token, then switch back."
+            ),
+            bg=CARD,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+            anchor="w",
+            wraplength=280,
+            justify="left",
+        ).pack(fill="x", pady=(0, 8))
+
+        self._dual_label_vars: dict[str, tk.StringVar] = {}
+        for label_text, attr in (
+            ("Primary bar label (optional)", "cursor_primary_label"),
+            ("Second bar label (optional)", "cursor_secondary_label"),
+        ):
+            row = tk.Frame(parent, bg=CARD)
+            row.pack(fill="x", pady=(0, 8))
+            tk.Label(
+                row,
+                text=label_text,
+                bg=CARD,
+                fg=TEXT,
+                font=("Segoe UI", 9),
+                anchor="w",
+            ).pack(fill="x")
+            var = tk.StringVar(value=str(getattr(self.settings, attr) or ""))
+
+            def make_trace(field: str, variable: tk.StringVar) -> Callable[[], None]:
+                def on_change(*_args: object) -> None:
+                    if self._updating:
+                        return
+                    setattr(self.settings, field, variable.get().strip())
+                    self._persist()
+
+                return on_change
+
+            var.trace_add("write", make_trace(attr, var))
+            self._dual_label_vars[attr] = var
+            tk.Entry(
+                row,
+                textvariable=var,
+                font=("Segoe UI", 9),
+                relief="solid",
+                bd=1,
+            ).pack(fill="x", pady=(4, 0))
+
+        tk.Label(
+            parent,
+            text="Second account token file (local)",
+            bg=CARD,
+            fg=TEXT,
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill="x")
+        self._secondary_token_var = tk.StringVar(
+            value=(self.settings.secondary_cursor_token_file or "").strip()
+        )
+        tk.Entry(
+            parent,
+            textvariable=self._secondary_token_var,
+            font=("Segoe UI", 9),
+            relief="solid",
+            bd=1,
+        ).pack(fill="x", pady=(4, 8))
+
+        def on_token_path_change(*_args: object) -> None:
+            if self._updating:
+                return
+            self.settings.secondary_cursor_token_file = (
+                self._secondary_token_var.get().strip()
+            )
+            self._persist()
+
+        self._secondary_token_var.trace_add("write", on_token_path_change)
+
+        btns = tk.Frame(parent, bg=CARD)
+        btns.pack(fill="x")
+
+        tk.Button(
+            btns,
+            text="Browse…",
+            command=self._browse_secondary_token,
+            bg=CARD,
+            fg=TEXT,
+            relief="flat",
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9),
+        ).pack(side="left")
+
+        tk.Button(
+            btns,
+            text="Save current Cursor login to file",
+            command=self._export_secondary_token,
+            bg=CARD,
+            fg=TEXT,
+            relief="flat",
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9),
+        ).pack(side="left", padx=(6, 0))
+
+    def _browse_secondary_token(self) -> None:
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Second account token file",
+            defaultextension=".txt",
+            filetypes=[("Text", "*.txt"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        self._secondary_token_var.set(path)
+
+    def _export_secondary_token(self) -> None:
+        path = (self.settings.secondary_cursor_token_file or "").strip()
+        if not path:
+            messagebox.showinfo(
+                self,
+                "Cursor Usage",
+                "Set a token file path first (Browse…), then export while signed "
+                "into your second Cursor account.",
+            )
+            return
+        try:
+            export_access_token_to_file(path)
+        except AuthError as exc:
+            messagebox.showerror(self, "Cursor Usage", str(exc))
+            return
+        messagebox.showinfo(
+            self,
+            "Cursor Usage",
+            "Saved the active Cursor login to your token file.\n\n"
+            "Switch back to your main account in Cursor when you're done.",
+        )
 
     def _add_pace_sync_row(self, parent: tk.Misc) -> None:
         tk.Label(
@@ -702,6 +850,13 @@ class SettingsWindow(tk.Toplevel):
                 )
             if hasattr(self, "_sync_path_var"):
                 self._sync_path_var.set(self._sync_display(settings.pace_sync_folder))
+            if hasattr(self, "_dual_label_vars"):
+                for attr, var in self._dual_label_vars.items():
+                    var.set(str(getattr(settings, attr) or ""))
+            if hasattr(self, "_secondary_token_var"):
+                self._secondary_token_var.set(
+                    (settings.secondary_cursor_token_file or "").strip()
+                )
         finally:
             self._updating = False
         if hasattr(self, "_sync_status_label"):

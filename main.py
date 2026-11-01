@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import font as tkfont
 
-from cursor_auth import AuthError
+from cursor_auth import AuthError, read_access_token_from_file
 from cursor_usage import (
     GrokBotUsage,
     PlanUsage,
@@ -46,6 +46,8 @@ from pacing import (
 from app_version import format_version_footer, whats_new_unread
 from settings import (
     AppSettings,
+    cursor_primary_bar_label,
+    cursor_secondary_bar_label,
     default_settings_path,
     effective_click_through,
     effective_pill_metric,
@@ -333,6 +335,9 @@ class ProgressRow(tk.Frame):
         if not self.sub_label.winfo_ismapped():
             self.sub_label.pack(fill="x", pady=(6, 0))
 
+    def set_title(self, title: str) -> None:
+        self.title_label.configure(text=title)
+
     def _clear_segments(self) -> None:
         for item in self._seg_ids:
             self.bar_outer.delete(item)
@@ -407,6 +412,8 @@ class UsageFloater(tk.Tk):
         self._connection_ok: bool | None = None
         self._last_success_at: datetime | None = None
         self._last_usage: PlanUsage | None = None
+        self._last_usage_secondary: PlanUsage | None = None
+        self._secondary_cursor_error: str | None = None
         self._last_grok_bot: GrokBotUsage | None = None
         cached_antigravity = _load_antigravity_cache()
         self._last_antigravity: AntigravityUsage | None = (
@@ -546,6 +553,11 @@ class UsageFloater(tk.Tk):
         )
         self.total_row.configure(bg=CARD)
         self.total_row.pack(fill="x", pady=(14, 0))
+
+        self.total_row_secondary = ProgressRow(
+            self.expanded, "Cursor Models (2)", hero=True, precise=True
+        )
+        self.total_row_secondary.configure(bg=CARD)
 
         self.grok_bot_row = ProgressRow(self.expanded, "Grok Bot", hero=True)
         self.grok_bot_row.configure(bg=CARD)
@@ -1032,6 +1044,7 @@ class UsageFloater(tk.Tk):
         for child in (
             self.header,
             self.total_row,
+            self.total_row_secondary,
             self.grok_bot_row,
             self.antigravity_row,
             self.codex_row,
@@ -1051,10 +1064,18 @@ class UsageFloater(tk.Tk):
             self.header.pack(fill="x")
 
         first_section = True
+        self._apply_cursor_bar_labels()
         if self.settings.show_total:
             self.total_row.pack(
                 fill="x",
                 pady=(14 if self.settings.show_header or first_section else 0, 0),
+            )
+            first_section = False
+
+        if self._dual_cursor_should_show():
+            self.total_row_secondary.pack(
+                fill="x",
+                pady=(12 if not first_section else 0, 0),
             )
             first_section = False
 
@@ -1106,6 +1127,63 @@ class UsageFloater(tk.Tk):
         self._update_reset_countdown()
         self._update_stale_badge()
 
+    def _dual_cursor_configured(self) -> bool:
+        if not self.settings.show_dual_cursor:
+            return False
+        path = (self.settings.secondary_cursor_token_file or "").strip()
+        return bool(path) and Path(path).expanduser().is_file()
+
+    def _dual_cursor_should_show(self) -> bool:
+        return (
+            self._dual_cursor_configured()
+            and bool(self.settings.show_total)
+            and not self._show_pill_mode()
+        )
+
+    def _last_cursor_bar(self) -> tk.Widget | None:
+        if (
+            hasattr(self, "total_row_secondary")
+            and self.total_row_secondary.winfo_ismapped()
+        ):
+            return self.total_row_secondary
+        if self.total_row.winfo_ismapped():
+            return self.total_row
+        if self.settings.show_header and self.header.winfo_ismapped():
+            return self.header
+        return None
+
+    def _apply_cursor_bar_labels(self) -> None:
+        self.total_row.set_title(cursor_primary_bar_label(self.settings))
+        if hasattr(self, "total_row_secondary"):
+            self.total_row_secondary.set_title(
+                cursor_secondary_bar_label(self.settings)
+            )
+
+    def _apply_secondary_cursor(
+        self,
+        usage: PlanUsage | None,
+        error: str | None,
+    ) -> None:
+        if not hasattr(self, "total_row_secondary"):
+            return
+        if not self._dual_cursor_should_show():
+            return
+        self._apply_cursor_bar_labels()
+        if usage is not None:
+            self._last_usage_secondary = usage
+            self._secondary_cursor_error = None
+            self.total_row_secondary.set_percent(usage.auto_percent)
+            self.total_row_secondary.set_subtext(
+                "Saved login · re-export token file when you switch accounts"
+            )
+        else:
+            self._last_usage_secondary = None
+            self._secondary_cursor_error = error
+            self.total_row_secondary.set_percent(0)
+            self.total_row_secondary.pct_label.configure(text="—%", fg=MUTED)
+            msg = (error or "Could not read saved account").strip()
+            self.total_row_secondary.set_subtext(msg[:80])
+
     def _grok_bot_should_show(self) -> bool:
         return (
             bool(self.settings.show_grok_bot)
@@ -1149,11 +1227,26 @@ class UsageFloater(tk.Tk):
                 self.total_row.pack(fill="x", pady=(14, 0), after=self.header)
         else:
             self.total_row.pack_forget()
+        self._update_dual_cursor_visibility()
         self._update_grok_bot_visibility()
         self._update_antigravity_visibility()
         self._update_codex_visibility()
         self._update_opencode_visibility()
         self._update_pace_visibility()
+
+    def _update_dual_cursor_visibility(self) -> None:
+        if not hasattr(self, "total_row_secondary"):
+            return
+        if self._dual_cursor_should_show():
+            if not self.total_row_secondary.winfo_ismapped():
+                after = self.total_row if self.total_row.winfo_ismapped() else self.header
+                self.total_row_secondary.pack(fill="x", pady=(12, 0), after=after)
+            self._apply_secondary_cursor(
+                self._last_usage_secondary,
+                self._secondary_cursor_error,
+            )
+        else:
+            self.total_row_secondary.pack_forget()
 
     def _update_grok_bot_visibility(self) -> None:
         if not hasattr(self, "grok_bot_row"):
@@ -1161,8 +1254,9 @@ class UsageFloater(tk.Tk):
         show = self._grok_bot_should_show()
         if show:
             if not self.grok_bot_row.winfo_ismapped():
-                if self.total_row.winfo_ismapped():
-                    self.grok_bot_row.pack(fill="x", pady=(12, 0), after=self.total_row)
+                anchor = self._last_cursor_bar()
+                if anchor is not None:
+                    self.grok_bot_row.pack(fill="x", pady=(12, 0), after=anchor)
                 elif self.header.winfo_ismapped():
                     self.grok_bot_row.pack(fill="x", pady=(14, 0), after=self.header)
                 else:
@@ -1178,8 +1272,8 @@ class UsageFloater(tk.Tk):
             if not self.antigravity_row.winfo_ismapped():
                 if self.grok_bot_row.winfo_ismapped():
                     self.antigravity_row.pack(fill="x", pady=(12, 0), after=self.grok_bot_row)
-                elif self.total_row.winfo_ismapped():
-                    self.antigravity_row.pack(fill="x", pady=(12, 0), after=self.total_row)
+                elif (anchor := self._last_cursor_bar()) is not None:
+                    self.antigravity_row.pack(fill="x", pady=(12, 0), after=anchor)
                 elif self.header.winfo_ismapped():
                     self.antigravity_row.pack(fill="x", pady=(14, 0), after=self.header)
                 else:
@@ -1197,8 +1291,8 @@ class UsageFloater(tk.Tk):
                     self.codex_row.pack(fill="x", pady=(12, 0), after=self.antigravity_row)
                 elif self.grok_bot_row.winfo_ismapped():
                     self.codex_row.pack(fill="x", pady=(12, 0), after=self.grok_bot_row)
-                elif self.total_row.winfo_ismapped():
-                    self.codex_row.pack(fill="x", pady=(12, 0), after=self.total_row)
+                elif (anchor := self._last_cursor_bar()) is not None:
+                    self.codex_row.pack(fill="x", pady=(12, 0), after=anchor)
                 elif self.header.winfo_ismapped():
                     self.codex_row.pack(fill="x", pady=(14, 0), after=self.header)
                 else:
@@ -1218,8 +1312,8 @@ class UsageFloater(tk.Tk):
                     self.opencode_row.pack(fill="x", pady=(12, 0), after=self.antigravity_row)
                 elif self.grok_bot_row.winfo_ismapped():
                     self.opencode_row.pack(fill="x", pady=(12, 0), after=self.grok_bot_row)
-                elif self.total_row.winfo_ismapped():
-                    self.opencode_row.pack(fill="x", pady=(12, 0), after=self.total_row)
+                elif (anchor := self._last_cursor_bar()) is not None:
+                    self.opencode_row.pack(fill="x", pady=(12, 0), after=anchor)
                 elif self.header.winfo_ismapped():
                     self.opencode_row.pack(fill="x", pady=(14, 0), after=self.header)
                 else:
@@ -1241,8 +1335,8 @@ class UsageFloater(tk.Tk):
                     self.pace_panel.pack(fill="x", pady=(12, 0), after=self.antigravity_row)
                 elif self.grok_bot_row.winfo_ismapped():
                     self.pace_panel.pack(fill="x", pady=(12, 0), after=self.grok_bot_row)
-                elif self.total_row.winfo_ismapped():
-                    self.pace_panel.pack(fill="x", pady=(12, 0), after=self.total_row)
+                elif (anchor := self._last_cursor_bar()) is not None:
+                    self.pace_panel.pack(fill="x", pady=(12, 0), after=anchor)
                 elif self.header.winfo_ismapped():
                     self.pace_panel.pack(fill="x", pady=(14, 0), after=self.header)
                 else:
@@ -2195,6 +2289,8 @@ class UsageFloater(tk.Tk):
             opencode: OpenCodeUsage | None = None
             opencode_ok = False
             cursor_error: str | None = None
+            usage_secondary: PlanUsage | None = None
+            usage_secondary_error: str | None = None
 
             try:
                 usage = fetch_current_period_usage()
@@ -2202,6 +2298,17 @@ class UsageFloater(tk.Tk):
                 cursor_error = str(exc)
             except Exception as exc:  # noqa: BLE001
                 cursor_error = f"Unexpected error: {exc}"
+
+            if self.settings.show_dual_cursor:
+                token_path = (self.settings.secondary_cursor_token_file or "").strip()
+                if token_path:
+                    try:
+                        token_b = read_access_token_from_file(token_path)
+                        usage_secondary = fetch_current_period_usage(token=token_b)
+                    except (AuthError, UsageError) as exc:
+                        usage_secondary_error = str(exc)
+                    except Exception as exc:  # noqa: BLE001
+                        usage_secondary_error = f"Unexpected error: {exc}"
 
             if usage is not None:
                 try:
@@ -2233,15 +2340,35 @@ class UsageFloater(tk.Tk):
             if usage is not None:
                 self.after(
                     0,
-                    lambda u=usage, g=grok, g_ok=grok_ok, a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok, o=opencode, o_ok=opencode_ok: self._apply_usage(
-                        u, grok=g, grok_updated=g_ok, antigravity=a, antigravity_updated=a_ok, antigravity_error=ae, codex=c, codex_updated=c_ok, opencode=o, opencode_updated=o_ok
+                    lambda u=usage, u2=usage_secondary, u2e=usage_secondary_error, g=grok, g_ok=grok_ok, a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok, o=opencode, o_ok=opencode_ok: self._apply_usage(
+                        u,
+                        usage_secondary=u2,
+                        usage_secondary_error=u2e,
+                        grok=g,
+                        grok_updated=g_ok,
+                        antigravity=a,
+                        antigravity_updated=a_ok,
+                        antigravity_error=ae,
+                        codex=c,
+                        codex_updated=c_ok,
+                        opencode=o,
+                        opencode_updated=o_ok,
                     ),
                 )
             else:
                 self.after(
                     0,
-                    lambda m=cursor_error or "Cursor offline", a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok, o=opencode, o_ok=opencode_ok: self._apply_error(
-                        m, antigravity=a, antigravity_updated=a_ok, antigravity_error=ae, codex=c, codex_updated=c_ok, opencode=o, opencode_updated=o_ok
+                    lambda m=cursor_error or "Cursor offline", u2=usage_secondary, u2e=usage_secondary_error, a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok, o=opencode, o_ok=opencode_ok: self._apply_error(
+                        m,
+                        usage_secondary=u2,
+                        usage_secondary_error=u2e,
+                        antigravity=a,
+                        antigravity_updated=a_ok,
+                        antigravity_error=ae,
+                        codex=c,
+                        codex_updated=c_ok,
+                        opencode=o,
+                        opencode_updated=o_ok,
                     ),
                 )
             self.after(0, self._clear_refreshing)
@@ -2304,6 +2431,9 @@ class UsageFloater(tk.Tk):
     def _apply_usage(
         self,
         usage: PlanUsage,
+        *,
+        usage_secondary: PlanUsage | None = None,
+        usage_secondary_error: str | None = None,
         grok: GrokBotUsage | None = None,
         grok_updated: bool = True,
         antigravity: AntigravityUsage | None = None,
@@ -2332,6 +2462,9 @@ class UsageFloater(tk.Tk):
         self._last_success_at = datetime.now()
         self.total_row.set_percent(usage.auto_percent)
         self.total_row.set_subtext(_cursor_subtext(usage))
+        self._apply_cursor_bar_labels()
+        self._apply_secondary_cursor(usage_secondary, usage_secondary_error)
+        self._update_dual_cursor_visibility()
         self.auto_row.set_percent(usage.auto_percent)
         self.api_row.set_percent(usage.api_percent)
         self._apply_grok_bot(self._last_grok_bot)
@@ -2497,6 +2630,9 @@ class UsageFloater(tk.Tk):
     def _apply_error(
         self,
         message: str,
+        *,
+        usage_secondary: PlanUsage | None = None,
+        usage_secondary_error: str | None = None,
         antigravity: AntigravityUsage | None = None,
         antigravity_updated: bool = False,
         antigravity_error: str | None = None,
@@ -2524,6 +2660,8 @@ class UsageFloater(tk.Tk):
             self.total_row.set_subtext("Sign in to Cursor, then refresh")
         else:
             self.total_row.set_subtext(message[:80])
+        self._apply_secondary_cursor(usage_secondary, usage_secondary_error)
+        self._update_dual_cursor_visibility()
         if antigravity_updated or codex_updated or opencode_updated:
             self._update_pill_percent()
         if not self._show_pill_mode():

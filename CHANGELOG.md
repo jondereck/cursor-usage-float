@@ -2,6 +2,13 @@
 
 Bump `version.json` when you add a section (newest first).
 
+## 1.1.0 — 2026-11-01
+
+### Added
+- **Second Cursor account bar** — top bar = active Cursor login; second bar reads a
+  **local token file** (Settings → Cursor accounts). Export while signed into the
+  other account, then switch back. Token path stays on this PC (not synced).
+
 ## 1.0.0 — 2026-11-01
 
 ### Added
