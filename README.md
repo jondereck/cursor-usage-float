@@ -51,11 +51,16 @@ Notes: first launch is a bit slower (the onefile bundle self-extracts), some ant
    floater decrypts it with Cursor’s Local State OSCrypt key via DPAPI.)
 2. Calls Cursor’s HTTPS usage endpoints:  
    `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`  
+   (falling back to `…/GetUsageLimitStatusAndActiveGrants` on merged plans that
+   no longer return `planUsage` percentages)  
    and (best-effort) `…/GetSandUsageStatus` for **Grok Bot** weekly usage.
 3. Connects to the local **Antigravity** language server to read live model quotas (Gemini & 3P models).
 4. Reads **Codex** authentication from `~/.codex/auth.json` and fetches live rate limits & allowance from ChatGPT backend API.
 5. Reads **OpenCode** usage from its local SQLite store (`~/.local/share/opencode/opencode.db`, today's tokens + cost) and scores it as a % of your daily token budget. No network call.
-6. Draws the progress bars and refreshes about every **3 minutes** (↻ for manual refresh).
+6. Draws the progress bars and refreshes **adaptively**: about every **30s**
+   while you are actively at the keyboard (or usage is moving), every **90s**
+   when you have been quiet a few minutes, and every **3 minutes** while you
+   are away (↻ for manual refresh).
 7. Splits the start-of-day remaining allowance equally across the calendar
    days through reset. Under-use carries forward and raises later daily
    budgets; over-use lowers them. Soft-stop states:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import threading
+import time
 import tkinter as tk
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +29,7 @@ from opencode_usage import (
     format_token_count,
 )
 from paths import resource_path
+from polling import POLL_TICK_MS, SLOW_POLL_MS, poll_interval_ms
 from pace_history import (
     active_pace_history_path,
     load_history,
@@ -47,6 +49,7 @@ from settings import (
     effective_click_through,
     effective_pill_metric,
     ensure_usage_section_visible,
+    format_cursor_usage_percent,
     format_usage_percent,
     load_settings,
     resolve_minimized_percent,
@@ -95,6 +98,7 @@ from win_clickthrough import (
 from win_taskbar import apply_taskbar_button
 from win_tray import TrayIcon
 from win_hotkey import GlobalHotkey
+from win_idle import seconds_since_last_input
 from win_startup import set_start_with_windows
 from window_state import (
     WindowState,
@@ -104,7 +108,7 @@ from window_state import (
     virtual_screen_bounds,
 )
 
-POLL_MS = 3 * 60 * 1000
+POLL_MS = SLOW_POLL_MS  # slowest cadence (also drives the stale badge)
 STALE_MS = 2 * POLL_MS
 WINDOW_WIDTH = 300
 PILL_WIDTH = 110
@@ -130,6 +134,14 @@ FADE_OUT_MS = 90
 FADE_IN_MS = 110
 FADE_FRAME_MS = 12
 APP_ICON = resource_path("assets", "app.ico")
+
+
+def _usage_moved(previous: PlanUsage, current: PlanUsage) -> bool:
+    """True when headline percentages moved (covers background agent usage)."""
+    return (
+        round(previous.auto_percent, 1) != round(current.auto_percent, 1)
+        or round(previous.api_percent, 1) != round(current.api_percent, 1)
+    )
 
 
 def _antigravity_cache_path() -> Path:
@@ -225,12 +237,14 @@ class ProgressRow(tk.Frame):
         *,
         hero: bool = False,
         compact: bool = False,
+        precise: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(master, bg=master.cget("bg"), **kwargs)
         self._value = 0.0
         self._hero = hero
         self._compact = compact
+        self._precise = precise
 
         header = tk.Frame(self, bg=self.cget("bg"))
         header.pack(fill="x")
@@ -295,8 +309,13 @@ class ProgressRow(tk.Frame):
     def set_percent(self, value: float) -> None:
         self._value = max(0.0, min(100.0, float(value)))
         tip = bar_color_for_percent(self._value)
+        label = (
+            format_cursor_usage_percent(self._value)
+            if self._precise
+            else format_usage_percent(self._value)
+        )
         self.pct_label.configure(
-            text=format_usage_percent(self._value),
+            text=label,
             fg=tip if self._value >= 40.0 else TEXT,
         )
         self._redraw_bar()
@@ -379,6 +398,8 @@ class UsageFloater(tk.Tk):
         self._drag_x = 0
         self._drag_y = 0
         self._refreshing = False
+        self._last_poll_at = 0.0
+        self._last_usage_change_at = 0.0
         self._antigravity_retry_job: str | None = None
         self._antigravity_retrying = False
         self._connection_ok: bool | None = None
@@ -450,7 +471,7 @@ class UsageFloater(tk.Tk):
         if self._tray is not None:
             self.after(150, self._tray.show)
         self.after(200, self.refresh_async)
-        self.after(POLL_MS, self._schedule_poll)
+        self.after(POLL_TICK_MS, self._poll_tick)
         self.after(30_000, self._schedule_stale_check)
 
     def _build_ui(self) -> None:
@@ -516,7 +537,9 @@ class UsageFloater(tk.Tk):
         )
         self._header_btn("−", self._toggle_minimized).pack(side="right", padx=(0, 2))
 
-        self.total_row = ProgressRow(self.expanded, "Cursor Models", hero=True)
+        self.total_row = ProgressRow(
+            self.expanded, "Cursor Models", hero=True, precise=True
+        )
         self.total_row.configure(bg=CARD)
         self.total_row.pack(fill="x", pady=(14, 0))
 
@@ -605,7 +628,9 @@ class UsageFloater(tk.Tk):
         self.detail = tk.Frame(self.expanded, bg=CARD)
         self.detail.pack(fill="x", pady=(14, 0))
 
-        self.auto_row = ProgressRow(self.detail, "Cursor Models", compact=True)
+        self.auto_row = ProgressRow(
+            self.detail, "Cursor Models", compact=True, precise=True
+        )
         self.auto_row.configure(bg=CARD)
 
         self.api_row = ProgressRow(self.detail, "Other Models", compact=True)
@@ -1771,7 +1796,7 @@ class UsageFloater(tk.Tk):
             opencode_text = "—%"
             if show_opencode and self._last_opencode is not None:
                 opencode_text = format_usage_percent(self._last_opencode.usage_percent)
-            cursor_txt = format_usage_percent(self._last_usage.auto_percent)
+            cursor_txt = format_cursor_usage_percent(self._last_usage.auto_percent)
             view.update(
                 {
                     "layout": "icons",
@@ -2076,9 +2101,16 @@ class UsageFloater(tk.Tk):
         if self._show_pill_mode():
             self._pill_click(event)
 
-    def _schedule_poll(self) -> None:
-        self.refresh_async()
-        self.after(POLL_MS, self._schedule_poll)
+    def _poll_interval_ms(self) -> int:
+        """Adaptive cadence: fast while you are around, slow while you are away."""
+        since_change_s = time.monotonic() - self._last_usage_change_at
+        return poll_interval_ms(seconds_since_last_input(), since_change_s)
+
+    def _poll_tick(self) -> None:
+        interval_s = self._poll_interval_ms() / 1000.0
+        if time.monotonic() - self._last_poll_at >= interval_s:
+            self.refresh_async()
+        self.after(POLL_TICK_MS, self._poll_tick)
 
     def _schedule_stale_check(self) -> None:
         if not self._show_pill_mode():
@@ -2123,6 +2155,7 @@ class UsageFloater(tk.Tk):
     def refresh_async(self) -> None:
         if self._refreshing:
             return
+        self._last_poll_at = time.monotonic()
         self._cancel_antigravity_retry()
         self._refreshing = True
         self._start_pulse()
@@ -2261,6 +2294,8 @@ class UsageFloater(tk.Tk):
         opencode: OpenCodeUsage | None = None,
         opencode_updated: bool = True,
     ) -> None:
+        if self._last_usage is not None and _usage_moved(self._last_usage, usage):
+            self._last_usage_change_at = time.monotonic()
         self._last_usage = usage
         if grok_updated:
             self._last_grok_bot = grok
@@ -2276,7 +2311,7 @@ class UsageFloater(tk.Tk):
         self._connection_ok = True
         self._last_success_at = datetime.now()
         self.total_row.set_percent(usage.auto_percent)
-        self.total_row.set_subtext("Includes Composer and Cursor Grok models")
+        self.total_row.set_subtext(_cursor_subtext(usage))
         self.auto_row.set_percent(usage.auto_percent)
         self.api_row.set_percent(usage.api_percent)
         self._apply_grok_bot(self._last_grok_bot)
@@ -2497,6 +2532,13 @@ def _parse_billing_end(raw: str) -> datetime | None:
         return datetime.fromtimestamp(num, tz=timezone.utc)
     except (TypeError, ValueError, OSError):
         return None
+
+
+def _cursor_subtext(usage: PlanUsage) -> str:
+    """Row caption: spend label for grant-based plans, else the pool note."""
+    if usage.source == "grants":
+        return usage.spend_label or "Included usage this period"
+    return "Includes Composer and Cursor Grok models"
 
 
 def _format_opencode_subtext(opencode: OpenCodeUsage) -> str:

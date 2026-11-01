@@ -94,3 +94,18 @@
   unavailable/local fallback, red write error, and gray local-only.
 - Shows the newest successful shared `settings.json` / `pace-history.json`
   write time and refreshes every 10 seconds while Settings is open.
+
+## 2026-11-01
+
+### Done
+- **Adaptive refresh** (`polling.py` + `win_idle.py`): 30s while you are at the
+  keyboard (or usage just moved, e.g. a background agent), 90s after a few
+  minutes quiet, 3 min while away. A 10s local tick re-evaluates the cadence so
+  coming back to the PC refreshes almost immediately. No extra network calls.
+- **Cursor usage fallback**: merged xAI-era plans stopped returning the
+  `planUsage` block, so the row showed `Error — Usage response missing
+  planUsage data.`. `fetch_current_period_usage()` now falls back to
+  `GetUsageLimitStatusAndActiveGrants` and derives the % from cent grants
+  (`totalCents − remainingCents`); the row caption becomes
+  `$5.98 of $100.00 used` and the reset countdown uses the earliest grant
+  expiry. Accounts that still return `planUsage` are unchanged.

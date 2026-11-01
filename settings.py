@@ -269,8 +269,13 @@ def format_percent(value: float) -> str:
     return f"{value:.1f}%"
 
 
+def format_cursor_usage_percent(value: float) -> str:
+    """Cursor Models only: one decimal place (e.g. 15.1%)."""
+    return format_percent(value)
+
+
 def format_usage_percent(value: float) -> str:
-    """Whole percent, matching Cursor's dashboard (10.6 → 11%)."""
+    """Whole percent for non-Cursor pools (10.6 → 11%)."""
     value = max(0.0, min(100.0, float(value)))
     return f"{int(value + 0.5)}%"
 

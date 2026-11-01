@@ -12,7 +12,11 @@ from cursor_usage import (
     parse_grok_bot_usage,
     parse_plan_usage,
 )
-from settings import format_usage_percent, resolve_minimized_percent
+from settings import (
+    format_cursor_usage_percent,
+    format_usage_percent,
+    resolve_minimized_percent,
+)
 
 
 def test_parse_plan_usage_reads_auto_and_api_pools() -> None:
@@ -34,6 +38,12 @@ def test_format_usage_percent_matches_cursor_whole_numbers() -> None:
     assert format_usage_percent(10.6) == "11%"
     assert format_usage_percent(0.0) == "0%"
     assert format_usage_percent(11.4) == "11%"
+
+
+def test_format_cursor_usage_percent_one_decimal() -> None:
+    assert format_cursor_usage_percent(15.14) == "15.1%"
+    assert format_cursor_usage_percent(10.6) == "10.6%"
+    assert format_cursor_usage_percent(0.0) == "0.0%"
 
 
 def test_budget_from_plan_uses_cursor_models_pool() -> None:

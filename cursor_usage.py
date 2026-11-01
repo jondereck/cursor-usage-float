@@ -13,8 +13,14 @@ from cursor_auth import get_access_token
 API_ORIGIN = "https://api2.cursor.sh"
 USAGE_PATH = "/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
 USAGE_URL = f"{API_ORIGIN}{USAGE_PATH}"
+GRANT_PATH = "/aiserver.v1.DashboardService/GetUsageLimitStatusAndActiveGrants"
+GRANT_URL = f"{API_ORIGIN}{GRANT_PATH}"
 GROK_BOT_PATH = "/aiserver.v1.DashboardService/GetSandUsageStatus"
 GROK_BOT_URL = f"{API_ORIGIN}{GROK_BOT_PATH}"
+
+# api2.cursor.sh is intermittently slow (20s read timeouts produced spurious
+# "Network error" rows); 40s is the shortest timeout that reliably completed.
+HTTP_TIMEOUT_S = 40
 
 
 class UsageError(Exception):
@@ -29,12 +35,22 @@ class PlanUsage:
     total_spend_cents: int | None = None
     limit_cents: int | None = None
     billing_cycle_end: str | None = None
+    # "plan" = planUsage percentages; "grants" = cent grants from the newer
+    # merged-plan endpoint (percentages derived from spend/limit).
+    source: str = "plan"
 
     @property
     def summary_line(self) -> str:
         auto = _fmt_pct(self.auto_percent)
         api = _fmt_pct(self.api_percent)
         return f"{auto}% Auto and {api}% API used"
+
+    @property
+    def spend_label(self) -> str | None:
+        """'$5.98 of $100.00 used' for spend-based plans, else None."""
+        if self.total_spend_cents is None or not self.limit_cents:
+            return None
+        return f"{_fmt_usd(self.total_spend_cents)} of {_fmt_usd(self.limit_cents)} used"
 
 
 @dataclass(frozen=True)
@@ -109,6 +125,14 @@ def _fmt_pct(value: float) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".")
 
 
+def _fmt_usd(cents: int) -> str:
+    return f"${cents / 100:,.2f}"
+
+
+def _clamp_pct(value: float) -> float:
+    return max(0.0, min(100.0, value))
+
+
 def _as_float(data: dict[str, Any], *keys: str, default: float = 0.0) -> float:
     for key in keys:
         if key in data and data[key] is not None:
@@ -156,6 +180,91 @@ def parse_plan_usage(payload: dict[str, Any]) -> PlanUsage:
         total_spend_cents=_as_optional_int(plan, "totalSpend", "totalSpendCents"),
         limit_cents=_as_optional_int(plan, "limit", "limitCents"),
         billing_cycle_end=billing_end,
+    )
+
+
+def parse_usage_limit_grants(
+    payload: dict[str, Any],
+    *,
+    billing_cycle_end: str | None = None,
+) -> PlanUsage:
+    """
+    Build PlanUsage from GetUsageLimitStatusAndActiveGrants.
+
+    Merged xAI-era plans stopped returning planUsage percentages; the client
+    tracks included usage as cent grants instead. Percentages here are derived
+    from (totalCents - remainingCents) / totalCents, and the reset time comes
+    from the earliest grant expiry.
+    """
+    grants = payload.get("activeGrants")
+    if not isinstance(grants, list):
+        raise UsageError("Cursor isn't reporting usage for this account yet.")
+
+    # Included-usage grants are typed "usage_limit_policy"; promos and credits
+    # share the list, so prefer the policy grants when any are present.
+    policy_grants = [
+        grant
+        for grant in grants
+        if isinstance(grant, dict) and grant.get("grantType") == "usage_limit_policy"
+    ]
+    if policy_grants:
+        grants = policy_grants
+
+    total_cents = 0
+    remaining_cents = 0
+    auto_total = 0
+    auto_remaining = 0
+    expiries: list[int] = []
+
+    for grant in grants:
+        if not isinstance(grant, dict):
+            continue
+        total = _as_optional_int(grant, "totalCents")
+        remaining = _as_optional_int(grant, "remainingCents")
+        if not total or total <= 0 or remaining is None:
+            continue
+        remaining = max(0, min(total, remaining))
+        total_cents += total
+        remaining_cents += remaining
+        expires_at = _as_optional_int(grant, "expiresAtMs")
+        if expires_at:
+            expiries.append(expires_at)
+        models = grant.get("allowedModelIds")
+        models = models if isinstance(models, list) else []
+        if not models or "default" in models:
+            auto_total += total
+            auto_remaining += remaining
+
+    if total_cents <= 0:
+        raise UsageError("Cursor isn't reporting usage for this account yet.")
+
+    used_cents = total_cents - remaining_cents
+    total_percent = _clamp_pct(used_cents / total_cents * 100.0)
+    if auto_total > 0:
+        auto_percent = _clamp_pct((auto_total - auto_remaining) / auto_total * 100.0)
+        api_total = total_cents - auto_total
+        api_remaining = remaining_cents - auto_remaining
+        api_percent = (
+            _clamp_pct((api_total - api_remaining) / api_total * 100.0)
+            if api_total > 0
+            else 0.0
+        )
+    else:
+        auto_percent = total_percent
+        api_percent = 0.0
+
+    reset_at = min(expiries) if expiries else None
+    if reset_at is not None:
+        billing_cycle_end = str(reset_at)
+
+    return PlanUsage(
+        total_percent=total_percent,
+        auto_percent=auto_percent,
+        api_percent=api_percent,
+        total_spend_cents=used_cents,
+        limit_cents=total_cents,
+        billing_cycle_end=billing_cycle_end,
+        source="grants",
     )
 
 
@@ -224,7 +333,7 @@ def _post_dashboard_json(url: str, access_token: str) -> dict[str, Any]:
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_S) as response:
             raw = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         detail = ""
@@ -254,10 +363,30 @@ def fetch_current_period_usage(token: str | None = None) -> PlanUsage:
     """
     POST GetCurrentPeriodUsage using the local Cursor bearer token.
 
+    Falls back to GetUsageLimitStatusAndActiveGrants when the response has no
+    planUsage block (merged xAI-era plans report cent grants instead).
+
     Token is used in-memory only and sent solely to api2.cursor.sh.
     """
     access_token = token if token is not None else get_access_token()
-    return parse_plan_usage(_post_dashboard_json(USAGE_URL, access_token))
+    payload = _post_dashboard_json(USAGE_URL, access_token)
+    try:
+        return parse_plan_usage(payload)
+    except UsageError:
+        pass
+
+    billing_end = payload.get("billingCycleEnd")
+    try:
+        grants = _post_dashboard_json(GRANT_URL, access_token)
+    except UsageError as exc:
+        raise UsageError(
+            "Cursor isn't reporting usage for this account yet."
+        ) from exc
+
+    return parse_usage_limit_grants(
+        grants,
+        billing_cycle_end=str(billing_end) if billing_end is not None else None,
+    )
 
 
 def fetch_grok_bot_usage(token: str | None = None) -> GrokBotUsage:
