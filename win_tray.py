@@ -85,6 +85,8 @@ class TrayIcon:
         icon_path: Path | None = None,
         on_show: Callable[[], None] | None = None,
         on_settings: Callable[[], None] | None = None,
+        on_whats_new: Callable[[], None] | None = None,
+        whats_new_unread: Callable[[], bool] | None = None,
         on_quit: Callable[[], None] | None = None,
         is_start_with_windows: Callable[[], bool] | None = None,
         is_start_minimized: Callable[[], bool] | None = None,
@@ -96,6 +98,8 @@ class TrayIcon:
         self._icon_path = icon_path
         self._on_show = on_show
         self._on_settings = on_settings
+        self._on_whats_new = on_whats_new
+        self._whats_new_unread = whats_new_unread
         self._on_quit = on_quit
         self._is_start_with_windows = is_start_with_windows or (lambda: False)
         self._is_start_minimized = is_start_minimized or (lambda: False)
@@ -390,12 +394,35 @@ class TrayIcon:
         menu = tk.Menu(host, tearoff=0)
         menu.add_command(label="Cursor Usage", command=self._handle_show)
         menu.add_command(label="Settings", command=self._handle_settings)
+        self._whats_new_index = 2
+        menu.add_command(label="What's New", command=self._handle_whats_new)
         extras = tk.Menu(menu, tearoff=0)
         menu.add_cascade(label="Extras", menu=extras)
         self._extras_menu = extras
         menu.add_command(label="Quit", command=self._handle_quit)
         self._menu = menu
         self._refresh_extras_checks()
+        self._refresh_whats_new_label()
+
+    def _whats_new_menu_label(self) -> str:
+        if self._whats_new_unread is not None and self._whats_new_unread():
+            return "What's New ●"
+        return "What's New"
+
+    def _refresh_whats_new_label(self) -> None:
+        if self._menu is None:
+            return
+        try:
+            self._menu.entryconfigure(
+                self._whats_new_index,
+                label=self._whats_new_menu_label(),
+            )
+        except Exception:
+            pass
+
+    def _handle_whats_new(self) -> None:
+        if self._on_whats_new:
+            self._on_whats_new()
 
     def _refresh_extras_checks(self) -> None:
         extras = getattr(self, "_extras_menu", None)
@@ -457,6 +484,7 @@ class TrayIcon:
         self._quit_armed = False
         self._menu_open = True
         self._refresh_extras_checks()
+        self._refresh_whats_new_label()
 
         after = getattr(self._master, "after", None)
         if callable(after):

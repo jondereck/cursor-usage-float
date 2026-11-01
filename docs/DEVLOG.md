@@ -1,5 +1,12 @@
 # Dev log — cursor-usage-float
 
+## 2026-11-01
+
+### Done
+- **Version + What's New** (JonOS-style): `version.json` + `CHANGELOG.md`,
+  unread ● until **Got it** (`last_seen_version` in settings). Footer in
+  Settings; tray menu entry. Bump `version.json` when shipping notes.
+
 ## 2026-10-31
 
 ### Done

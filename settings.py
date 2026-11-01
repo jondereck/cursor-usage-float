@@ -51,6 +51,8 @@ class AppSettings:
     # Shared folder for pace-history.json + settings.json (e.g. Google Drive).
     # Empty = local APPDATA only. Path itself stays machine-local (Drive letter may differ).
     pace_sync_folder: str = ""
+    # What's New: last release the user acknowledged (see version.json).
+    last_seen_version: str = ""
 
 
 def default_settings_path() -> Path:
@@ -76,6 +78,9 @@ def _normalize(data: dict[str, Any]) -> AppSettings:
             values[f.name] = getattr(defaults, f.name)
             continue
         raw = data[f.name]
+        if f.name == "last_seen_version":
+            values[f.name] = str(raw).strip() if raw is not None else ""
+            continue
         expected = type(getattr(defaults, f.name))
         if not isinstance(raw, expected):
             values[f.name] = getattr(defaults, f.name)

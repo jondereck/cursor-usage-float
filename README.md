@@ -121,6 +121,13 @@ counted locally from `opencode.db` and reset at local midnight.
 | **Sync** | Shared folder for pace + settings, colored backup state, and last successful shared-folder write time |
 | **Startup** | Start with Windows (HKCU `Run` key `CursorUsageFloat`), Open hidden (pill) |
 
+## Version & What's New
+
+Same idea as JonOS: bump `version.json` (version, date, title), prepend a section to
+`CHANGELOG.md`, rebuild the `.exe` if you ship one. The app shows **What's New ●**
+in Settings and the tray until you tap **Got it** (stored as `last_seen_version` in
+`%APPDATA%\cursor-usage-float\settings.json`).
+
 ## Dev tests
 
 ```bat

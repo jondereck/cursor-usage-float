@@ -43,6 +43,7 @@ from pacing import (
     format_compact,
     format_units,
 )
+from app_version import format_version_footer, whats_new_unread
 from settings import (
     AppSettings,
     default_settings_path,
@@ -56,6 +57,7 @@ from settings import (
     save_settings,
 )
 from settings_ui import SettingsWindow, open_settings
+from whats_new_ui import open_whats_new
 from theme import (
     BAR_BG,
     BG,
@@ -453,6 +455,8 @@ class UsageFloater(tk.Tk):
             icon_path=APP_ICON,
             on_show=self._on_tray_show,
             on_settings=self._open_settings,
+            on_whats_new=self._open_whats_new,
+            whats_new_unread=lambda: whats_new_unread(self.settings.last_seen_version),
             on_quit=self.destroy,
             is_start_with_windows=lambda: bool(self.settings.start_with_windows),
             is_start_minimized=lambda: bool(self.settings.start_minimized),
@@ -656,6 +660,7 @@ class UsageFloater(tk.Tk):
             pady=2,
         )
 
+        self._version_label = format_version_footer()
         self.status_label = tk.Label(
             self.expanded,
             text="Starting…",
@@ -808,7 +813,18 @@ class UsageFloater(tk.Tk):
             self._on_settings_changed,
             on_visibility=self._on_settings_visibility,
             hotkey_hint=hint,
+            on_whats_new_seen=self._on_whats_new_seen,
         )
+
+    def _open_whats_new(self) -> None:
+        open_whats_new(self, self.settings, on_seen=self._on_whats_new_seen)
+
+    def _on_whats_new_seen(self, settings: AppSettings) -> None:
+        self.settings = settings
+        if self._tray is not None:
+            self._tray._refresh_whats_new_label()
+        if self._settings_win is not None and self._settings_win.winfo_exists():
+            self._settings_win.sync_from_settings(settings)
 
     def _on_settings_visibility(self, open_: bool) -> None:
         self._settings_open = bool(open_)
@@ -1922,7 +1938,11 @@ class UsageFloater(tk.Tk):
             return
         if self._last_success_at is not None:
             stamp = self._last_success_at.strftime("%H:%M:%S")
-            self.status_label.configure(text=f"Updated {stamp}")
+            self.status_label.configure(
+                text=f"Updated {stamp} · {self._version_label}"
+            )
+        elif not (self.status_label.cget("text") or "").startswith("Updated"):
+            self.status_label.configure(text=self._version_label)
 
     def _target_size(self) -> tuple[int, int]:
         self.update_idletasks()
@@ -2322,7 +2342,9 @@ class UsageFloater(tk.Tk):
         self._update_pill_percent()
         if not self._show_pill_mode():
             stamp = self._last_success_at.strftime("%H:%M:%S")
-            self.status_label.configure(text=f"Updated {stamp}")
+            self.status_label.configure(
+                text=f"Updated {stamp} · {self._version_label}"
+            )
             self._update_reset_countdown()
             self._update_stale_badge()
             self._update_section_visibility()

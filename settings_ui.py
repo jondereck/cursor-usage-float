@@ -6,6 +6,7 @@ import tkinter as tk
 from collections.abc import Callable
 from tkinter import filedialog, ttk
 
+from app_version import format_version_footer, whats_new_unread
 from pace_history import apply_pace_sync_folder
 from paths import resource_path
 from settings import (
@@ -30,9 +31,12 @@ from theme import (
     WARN,
 )
 from win_app_icon import apply_tk_icon
+from whats_new_ui import open_whats_new
 from win_startup import set_start_with_windows
 
 APP_ICON = resource_path("assets", "app.ico")
+
+SETTINGS_SCROLL_MAX = 420
 
 DENSITY_LABELS = {
     "full": "Full",
@@ -134,6 +138,7 @@ class SettingsWindow(tk.Toplevel):
         on_change: Callable[[AppSettings], None],
         on_visibility: Callable[[bool], None] | None = None,
         hotkey_hint: str = "",
+        on_whats_new_seen: Callable[[AppSettings], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.title("Cursor Usage")
@@ -142,6 +147,7 @@ class SettingsWindow(tk.Toplevel):
         self.settings = settings
         self._on_change = on_change
         self._on_visibility = on_visibility
+        self._on_whats_new_seen = on_whats_new_seen
         self._updating = False
         self._sync_refresh_job: str | None = None
 
@@ -174,11 +180,66 @@ class SettingsWindow(tk.Toplevel):
         )
         subtitle.pack(fill="x", pady=(2, 14))
 
+        scroll_wrap = tk.Frame(outer, bg=BG)
+        scroll_wrap.pack(fill="both", expand=True)
+
+        self._settings_canvas = tk.Canvas(
+            scroll_wrap,
+            bg=BG,
+            highlightthickness=0,
+            bd=0,
+        )
+        scrollbar = ttk.Scrollbar(
+            scroll_wrap,
+            orient="vertical",
+            command=self._settings_canvas.yview,
+        )
+        self._settings_canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self._settings_canvas.pack(side="left", fill="both", expand=True)
+
+        body = tk.Frame(self._settings_canvas, bg=BG)
+        self._settings_canvas_window = self._settings_canvas.create_window(
+            (0, 0),
+            window=body,
+            anchor="nw",
+        )
+
+        def _sync_scroll_region(_event: object | None = None) -> None:
+            self._settings_canvas.configure(
+                scrollregion=self._settings_canvas.bbox("all")
+            )
+
+        def _sync_canvas_width(event: tk.Event) -> None:
+            self._settings_canvas.itemconfigure(
+                self._settings_canvas_window,
+                width=event.width,
+            )
+
+        body.bind("<Configure>", _sync_scroll_region)
+        self._settings_canvas.bind("<Configure>", _sync_canvas_width)
+
+        def _on_mousewheel(event: tk.Event) -> None:
+            self._settings_canvas.yview_scroll(
+                int(-1 * (event.delta / 120)),
+                "units",
+            )
+
+        def _bind_wheel(_event: object | None = None) -> None:
+            self._settings_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_wheel(_event: object | None = None) -> None:
+            self._settings_canvas.unbind_all("<MouseWheel>")
+
+        self._settings_canvas.bind("<Enter>", _bind_wheel)
+        self._settings_canvas.bind("<Leave>", _unbind_wheel)
+        self.bind("<Destroy>", lambda _e: _unbind_wheel(), add="+")
+
         self._density_var = tk.StringVar(value=settings.density)
         self._metric_var = tk.StringVar(value=settings.minimized_metric)
         self._bool_vars: dict[str, tk.BooleanVar] = {}
 
-        appearance = self._section(outer, "Appearance")
+        appearance = self._section(body, "Appearance")
         self._add_dropdown(
             appearance,
             "Density",
@@ -207,27 +268,37 @@ class SettingsWindow(tk.Toplevel):
             self._add_switch(appearance, label, attr)
         self._add_token_budget_dropdown(appearance)
 
-        behavior = self._section(outer, "Behavior")
+        behavior = self._section(body, "Behavior")
         for attr, label in (
             ("always_on_top", "Always on top"),
             ("click_through", "Click-through"),
         ):
             self._add_switch(behavior, label, attr)
 
-        sync = self._section(outer, "Sync")
+        sync = self._section(body, "Sync")
         self._add_pace_sync_row(sync)
 
-        startup = self._section(outer, "Startup")
+        startup = self._section(body, "Startup")
         for attr, label in (
             ("start_with_windows", "Start with Windows"),
             ("start_minimized", "Open hidden (pill)"),
         ):
             self._add_switch(startup, label, attr)
 
+        self._footer = tk.Frame(outer, bg=BG)
+        self._footer.pack(fill="x", pady=(12, 0))
+        self._refresh_footer()
+
         self.update_idletasks()
         w = max(self.winfo_reqwidth(), 300)
-        h = self.winfo_reqheight()
-        self.geometry(f"{w}x{h}")
+        body.update_idletasks()
+        content_h = body.winfo_reqheight()
+        canvas_h = min(max(content_h, 1), SETTINGS_SCROLL_MAX)
+        self._settings_canvas.configure(height=canvas_h)
+        _sync_scroll_region()
+        self.update_idletasks()
+        total_h = max(outer.winfo_reqheight(), 280)
+        self.geometry(f"{w}x{total_h}")
         if self._on_visibility is not None:
             self._on_visibility(True)
 
@@ -576,6 +647,47 @@ class SettingsWindow(tk.Toplevel):
         save_settings(self.settings)
         self._on_change(self.settings)
 
+    def _refresh_footer(self) -> None:
+        for child in self._footer.winfo_children():
+            child.destroy()
+        row = tk.Frame(self._footer, bg=BG)
+        row.pack(fill="x")
+        unread = whats_new_unread(self.settings.last_seen_version)
+        whats_label = "What's New ●" if unread else "What's New"
+        tk.Button(
+            row,
+            text=whats_label,
+            command=self._open_whats_new,
+            font=("Segoe UI", 9),
+            relief="flat",
+            bg=BG,
+            fg=TEXT,
+            cursor="hand2",
+            padx=0,
+            pady=0,
+        ).pack(side="left")
+        tk.Label(
+            row,
+            text=format_version_footer(),
+            bg=BG,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+            anchor="e",
+        ).pack(side="right", fill="x", expand=True)
+
+    def _open_whats_new(self) -> None:
+        open_whats_new(
+            self,
+            self.settings,
+            on_seen=self._on_whats_new_acknowledged,
+        )
+
+    def _on_whats_new_acknowledged(self, settings: AppSettings) -> None:
+        self.settings = settings
+        self._refresh_footer()
+        if self._on_whats_new_seen is not None:
+            self._on_whats_new_seen(settings)
+
     def sync_from_settings(self, settings: AppSettings) -> None:
         self.settings = settings
         self._updating = True
@@ -594,8 +706,14 @@ class SettingsWindow(tk.Toplevel):
             self._updating = False
         if hasattr(self, "_sync_status_label"):
             self._refresh_sync_status()
+        if hasattr(self, "_footer"):
+            self._refresh_footer()
 
     def _on_close(self) -> None:
+        try:
+            self._settings_canvas.unbind_all("<MouseWheel>")
+        except Exception:
+            pass
         if self._sync_refresh_job is not None:
             try:
                 self.after_cancel(self._sync_refresh_job)
@@ -614,6 +732,7 @@ def open_settings(
     on_change: Callable[[AppSettings], None],
     on_visibility: Callable[[bool], None] | None = None,
     hotkey_hint: str = "",
+    on_whats_new_seen: Callable[[AppSettings], None] | None = None,
 ) -> SettingsWindow:
     global _open_window
     if _open_window is not None and _open_window.winfo_exists():
@@ -630,6 +749,7 @@ def open_settings(
         on_change,
         on_visibility=on_visibility,
         hotkey_hint=hotkey_hint,
+        on_whats_new_seen=on_whats_new_seen,
     )
 
     def _clear(event: object) -> None:
