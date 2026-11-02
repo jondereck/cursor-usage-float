@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import sqlite3
@@ -213,6 +214,33 @@ def get_access_token(db_path: Path | None = None) -> str:
         raise AuthError("No Cursor access token found. Sign in to Cursor first.")
 
     return resolve_access_token(str(row[0]))
+
+
+def jwt_email_claim(token: str) -> str | None:
+    """Read an email-like claim from a JWT payload. Does not verify the signature."""
+    parts = (token or "").strip().split(".")
+    if len(parts) < 2:
+        return None
+    payload = parts[1]
+    pad = "=" * (-len(payload) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(payload + pad)
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for key in ("email", "preferred_username", "upn"):
+        value = data.get(key)
+        if isinstance(value, str) and "@" in value:
+            return value.strip()
+    return None
+
+
+def token_fingerprint(token: str) -> str:
+    """Stable short id for a bearer token (not the token itself)."""
+    digest = hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+    return digest[:16]
 
 
 def read_access_token_from_file(path: str | Path) -> str:

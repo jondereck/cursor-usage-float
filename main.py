@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import threading
 import time
 import tkinter as tk
@@ -11,7 +12,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import font as tkfont
 
-from cursor_auth import AuthError, read_access_token_from_file
+from account_slots import cursor_slot_label, short_email_display
+from cursor_auth import AuthError, get_access_token, read_access_token_from_file, token_fingerprint
+from cursor_identity import get_cursor_account_info
+from grok_app_usage import GrokAppError, GrokAppUsage, fetch_grok_app_usage, format_grok_plan_label, resolve_grok_auth_path
+from login_watch import file_stamp, live_cursor_fingerprint
 from cursor_usage import (
     GrokBotUsage,
     PlanUsage,
@@ -252,6 +257,7 @@ class ProgressRow(tk.Frame):
 
         header = tk.Frame(self, bg=self.cget("bg"))
         header.pack(fill="x")
+        header.columnconfigure(0, weight=1)
 
         title_size = 12 if hero else (9 if compact else 10)
         pct_size = 13 if hero else (9 if compact else 10)
@@ -264,7 +270,7 @@ class ProgressRow(tk.Frame):
             font=("Segoe UI Semibold" if hero else "Segoe UI", title_size, "bold" if hero else "normal"),
             anchor="w",
         )
-        self.title_label.pack(side="left")
+        self.title_label.grid(row=0, column=0, sticky="w")
 
         self.pct_label = tk.Label(
             header,
@@ -274,7 +280,7 @@ class ProgressRow(tk.Frame):
             font=("Segoe UI Semibold", pct_size),
             anchor="e",
         )
-        self.pct_label.pack(side="right")
+        self.pct_label.grid(row=0, column=1, sticky="e", padx=(6, 0))
 
         bar_h = 14 if hero else (6 if compact else 8)
         self._bar_h = bar_h
@@ -336,7 +342,11 @@ class ProgressRow(tk.Frame):
             self.sub_label.pack(fill="x", pady=(6, 0))
 
     def set_title(self, title: str) -> None:
-        self.title_label.configure(text=title)
+        text = (title or "").strip()
+        max_len = 22 if self._hero else 18
+        if len(text) > max_len:
+            text = text[: max_len - 1].rstrip() + "…"
+        self.title_label.configure(text=text)
 
     def _clear_segments(self) -> None:
         for item in self._seg_ids:
@@ -415,6 +425,12 @@ class UsageFloater(tk.Tk):
         self._last_usage_secondary: PlanUsage | None = None
         self._secondary_cursor_error: str | None = None
         self._last_grok_bot: GrokBotUsage | None = None
+        self._last_grok_app: GrokAppUsage | None = None
+        self._grok_app_error: str | None = None
+        self._cursor_account = get_cursor_account_info()
+        self._cursor_fp: str | None = None
+        self._cached_cursor_token: str | None = None
+        self._grok_auth_stamp: str | None = None
         cached_antigravity = _load_antigravity_cache()
         self._last_antigravity: AntigravityUsage | None = (
             cached_antigravity[0] if cached_antigravity else None
@@ -559,8 +575,11 @@ class UsageFloater(tk.Tk):
         )
         self.total_row_secondary.configure(bg=CARD)
 
-        self.grok_bot_row = ProgressRow(self.expanded, "Grok Bot", hero=True)
+        self.grok_bot_row = ProgressRow(self.expanded, "Grok Bot (Cursor)", hero=True)
         self.grok_bot_row.configure(bg=CARD)
+
+        self.grok_premium_row = ProgressRow(self.expanded, "Grok", hero=True)
+        self.grok_premium_row.configure(bg=CARD)
         # Packed only when show_grok_bot and fetch is eligible.
 
         self.antigravity_row = ProgressRow(self.expanded, "Antigravity", hero=True)
@@ -651,7 +670,6 @@ class UsageFloater(tk.Tk):
 
         self.api_row = ProgressRow(self.detail, "Other Models", compact=True)
         self.api_row.configure(bg=CARD)
-        self.api_row.pack(fill="x")
 
         self.reset_label = tk.Label(
             self.expanded,
@@ -705,12 +723,14 @@ class UsageFloater(tk.Tk):
             "layout": "ring",  # ring | icons
             "show_cursor": False,
             "show_grok": False,
+            "show_grok_com": False,
             "show_antigravity": False,
             "show_codex": False,
             "show_opencode": False,
             "text": "—%",
             "cursor_text": "—%",
             "grok_text": "—%",
+            "grok_com_text": "—%",
             "antigravity_text": "—%",
             "codex_text": "—%",
             "opencode_text": "—%",
@@ -726,6 +746,7 @@ class UsageFloater(tk.Tk):
         }
         self._pill_icon_cursor: tk.PhotoImage | None = None
         self._pill_icon_grok: tk.PhotoImage | None = None
+        self._pill_icon_xai: tk.PhotoImage | None = None
         self._pill_icon_antigravity: tk.PhotoImage | None = None
         self._pill_icon_codex: tk.PhotoImage | None = None
         self._pill_icon_opencode: tk.PhotoImage | None = None
@@ -735,6 +756,9 @@ class UsageFloater(tk.Tk):
             )
             self._pill_icon_grok = tk.PhotoImage(
                 file=str(resource_path("assets", "grok-mark.png"))
+            )
+            self._pill_icon_xai = tk.PhotoImage(
+                file=str(resource_path("assets", "xai-mark.png"))
             )
             self._pill_icon_antigravity = tk.PhotoImage(
                 file=str(resource_path("assets", "antigravity-mark.png"))
@@ -748,6 +772,7 @@ class UsageFloater(tk.Tk):
         except tk.TclError:
             self._pill_icon_cursor = None
             self._pill_icon_grok = None
+            self._pill_icon_xai = None
             self._pill_icon_antigravity = None
             self._pill_icon_codex = None
             self._pill_icon_opencode = None
@@ -1046,6 +1071,7 @@ class UsageFloater(tk.Tk):
             self.total_row,
             self.total_row_secondary,
             self.grok_bot_row,
+            self.grok_premium_row,
             self.antigravity_row,
             self.codex_row,
             self.opencode_row,
@@ -1081,6 +1107,13 @@ class UsageFloater(tk.Tk):
 
         if self._grok_bot_should_show():
             self.grok_bot_row.pack(
+                fill="x",
+                pady=(12 if not first_section else (14 if self.settings.show_header else 0), 0),
+            )
+            first_section = False
+
+        if self._grok_premium_should_show():
+            self.grok_premium_row.pack(
                 fill="x",
                 pady=(12 if not first_section else (14 if self.settings.show_header else 0), 0),
             )
@@ -1134,11 +1167,15 @@ class UsageFloater(tk.Tk):
         return bool(path) and Path(path).expanduser().is_file()
 
     def _dual_cursor_should_show(self) -> bool:
-        return (
-            self._dual_cursor_configured()
-            and bool(self.settings.show_total)
-            and not self._show_pill_mode()
-        )
+        if not self.settings.show_dual_cursor:
+            return False
+        if not self._dual_cursor_configured():
+            return False
+        if not self.settings.show_total or self._show_pill_mode():
+            return False
+        if self._last_usage_secondary is None:
+            return False
+        return True
 
     def _last_cursor_bar(self) -> tk.Widget | None:
         if (
@@ -1153,7 +1190,11 @@ class UsageFloater(tk.Tk):
         return None
 
     def _apply_cursor_bar_labels(self) -> None:
-        self.total_row.set_title(cursor_primary_bar_label(self.settings))
+        custom = (self.settings.cursor_primary_label or "").strip()
+        if custom:
+            self.total_row.set_title(custom)
+        else:
+            self.total_row.set_title(cursor_primary_bar_label(self.settings))
         if hasattr(self, "total_row_secondary"):
             self.total_row_secondary.set_title(
                 cursor_secondary_bar_label(self.settings)
@@ -1166,23 +1207,20 @@ class UsageFloater(tk.Tk):
     ) -> None:
         if not hasattr(self, "total_row_secondary"):
             return
-        if not self._dual_cursor_should_show():
-            return
-        self._apply_cursor_bar_labels()
         if usage is not None:
             self._last_usage_secondary = usage
             self._secondary_cursor_error = None
-            self.total_row_secondary.set_percent(usage.auto_percent)
-            self.total_row_secondary.set_subtext(
-                "Saved login · re-export token file when you switch accounts"
-            )
         else:
             self._last_usage_secondary = None
             self._secondary_cursor_error = error
-            self.total_row_secondary.set_percent(0)
-            self.total_row_secondary.pct_label.configure(text="—%", fg=MUTED)
-            msg = (error or "Could not read saved account").strip()
-            self.total_row_secondary.set_subtext(msg[:80])
+        if not self._dual_cursor_should_show():
+            self.total_row_secondary.pack_forget()
+            return
+        self.total_row_secondary.set_title(cursor_secondary_bar_label(self.settings))
+        self.total_row_secondary.set_percent(usage.auto_percent)
+        self.total_row_secondary.set_subtext(
+            "Saved login · re-export token file when you switch accounts"
+        )
 
     def _grok_bot_should_show(self) -> bool:
         return (
@@ -1191,6 +1229,9 @@ class UsageFloater(tk.Tk):
             and self._last_grok_bot.is_eligible
             and not self._show_pill_mode()
         )
+
+    def _grok_premium_should_show(self) -> bool:
+        return bool(self.settings.show_grok_premium) and not self._show_pill_mode()
 
     def _antigravity_should_show(self) -> bool:
         return (
@@ -1229,10 +1270,25 @@ class UsageFloater(tk.Tk):
             self.total_row.pack_forget()
         self._update_dual_cursor_visibility()
         self._update_grok_bot_visibility()
+        self._update_grok_premium_visibility()
         self._update_antigravity_visibility()
         self._update_codex_visibility()
         self._update_opencode_visibility()
         self._update_pace_visibility()
+        self._update_other_models_visibility()
+
+    def _update_other_models_visibility(self) -> None:
+        if not hasattr(self, "api_row"):
+            return
+        if (
+            self.settings.show_other_models
+            and not self._show_pill_mode()
+            and self.detail.winfo_ismapped()
+        ):
+            if not self.api_row.winfo_ismapped():
+                self.api_row.pack(fill="x")
+        else:
+            self.api_row.pack_forget()
 
     def _update_dual_cursor_visibility(self) -> None:
         if not hasattr(self, "total_row_secondary"):
@@ -1263,6 +1319,23 @@ class UsageFloater(tk.Tk):
                     self.grok_bot_row.pack(fill="x", pady=(0, 0))
         else:
             self.grok_bot_row.pack_forget()
+
+    def _update_grok_premium_visibility(self) -> None:
+        if not hasattr(self, "grok_premium_row"):
+            return
+        if self._grok_premium_should_show():
+            if not self.grok_premium_row.winfo_ismapped():
+                if self.grok_bot_row.winfo_ismapped():
+                    self.grok_premium_row.pack(fill="x", pady=(12, 0), after=self.grok_bot_row)
+                else:
+                    anchor = self._last_cursor_bar()
+                    if anchor is not None:
+                        self.grok_premium_row.pack(fill="x", pady=(12, 0), after=anchor)
+                    else:
+                        self.grok_premium_row.pack(fill="x")
+            self._apply_grok_premium(self._last_grok_app, self._grok_app_error)
+        else:
+            self.grok_premium_row.pack_forget()
 
     def _update_antigravity_visibility(self) -> None:
         if not hasattr(self, "antigravity_row"):
@@ -1438,13 +1511,24 @@ class UsageFloater(tk.Tk):
         canvas.create_line(x1 + r, y1, x2 - r, y1, fill=color, width=width, tags=tag)
         canvas.create_line(x1 + r, y2, x2 - r, y2, fill=color, width=width, tags=tag)
 
-    def _pill_grok_half(self) -> bool:
-        """True when Grok Bot weekly usage should appear beside Cursor in the pill."""
+    def _pill_grok_bot_half(self) -> bool:
+        """Grok Bot (Cursor) weekly allowance beside Cursor in the pill."""
         return (
             bool(self.settings.show_grok_bot)
             and self._last_grok_bot is not None
             and self._last_grok_bot.is_eligible
         )
+
+    def _pill_grok_com_half(self) -> bool:
+        """Grok.com subscription (grok login) in the pill."""
+        return (
+            bool(self.settings.show_grok_premium)
+            and self._last_grok_app is not None
+            and self._last_grok_app.is_eligible
+        )
+
+    def _pill_grok_half(self) -> bool:
+        return self._pill_grok_bot_half()
 
     def _pill_antigravity_half(self) -> bool:
         """True when Antigravity usage should appear in the pill."""
@@ -1489,6 +1573,12 @@ class UsageFloater(tk.Tk):
             grok_w = (
                 font_nums.measure(str(view.get("grok_text") or "—%")) if show_grok else 0
             )
+            show_grok_com = bool(view.get("show_grok_com"))
+            grok_com_w = (
+                font_nums.measure(str(view.get("grok_com_text") or "—%"))
+                if show_grok_com
+                else 0
+            )
             show_anti = bool(view.get("show_antigravity"))
             anti_w = (
                 font_nums.measure(str(view.get("antigravity_text") or "—%")) if show_anti else 0
@@ -1509,7 +1599,16 @@ class UsageFloater(tk.Tk):
                 font_cue = tkfont.Font(family="Segoe UI", size=7, weight="bold")
                 cue_w = font_cue.measure(cue) + PILL_DUAL_SECTION_GAP
             sections = sum(
-                1 for on in (show_cursor, show_grok, show_anti, show_codex, show_opencode) if on
+                1
+                for on in (
+                    show_cursor,
+                    show_grok,
+                    show_grok_com,
+                    show_anti,
+                    show_codex,
+                    show_opencode,
+                )
+                if on
             )
             width = PILL_DUAL_PAD_X
             first = True
@@ -1525,6 +1624,8 @@ class UsageFloater(tk.Tk):
                 _add_section(cursor_w)
             if show_grok:
                 _add_section(grok_w)
+            if show_grok_com:
+                _add_section(grok_com_w)
             if show_anti:
                 _add_section(anti_w)
             if show_codex:
@@ -1537,7 +1638,7 @@ class UsageFloater(tk.Tk):
             return (
                 max(width, PILL_HEIGHT),
                 PILL_HEIGHT,
-                cursor_w + grok_w + anti_w + codex_w + opencode_w,
+                cursor_w + grok_w + grok_com_w + anti_w + codex_w + opencode_w,
                 0,
             )
 
@@ -1682,6 +1783,11 @@ class UsageFloater(tk.Tk):
             _divider_then_icon_pct(
                 self._pill_icon_grok,
                 str(view.get("grok_text") or "—%"),
+            )
+        if view.get("show_grok_com"):
+            _divider_then_icon_pct(
+                self._pill_icon_xai,
+                str(view.get("grok_com_text") or "—%"),
             )
         if view.get("show_antigravity"):
             _divider_then_icon_pct(
@@ -1846,11 +1952,13 @@ class UsageFloater(tk.Tk):
                         "layout": "icons",
                         "show_cursor": False,
                         "show_grok": False,
+                        "show_grok_com": False,
                         "show_antigravity": show_anti,
                         "show_codex": show_codex,
                         "show_opencode": show_opencode,
                         "cursor_text": "—%",
                         "grok_text": "—%",
+            "grok_com_text": "—%",
                         "antigravity_text": anti_text,
                         "codex_text": codex_text,
                         "opencode_text": opencode_text,
@@ -1867,12 +1975,14 @@ class UsageFloater(tk.Tk):
                         "layout": "ring",
                         "show_cursor": False,
                         "show_grok": False,
+                        "show_grok_com": False,
                         "show_antigravity": False,
                         "show_codex": False,
                         "show_opencode": False,
                         "text": "—%",
                         "cursor_text": "—%",
                         "grok_text": "—%",
+            "grok_com_text": "—%",
                         "antigravity_text": "—%",
                         "codex_text": "—%",
                         "opencode_text": "—%",
@@ -1885,7 +1995,8 @@ class UsageFloater(tk.Tk):
             self._apply_pill_border(CARD)
             return
 
-        show_grok = self._pill_grok_half()
+        show_grok = self._pill_grok_bot_half()
+        show_grok_com = self._pill_grok_com_half()
         show_anti = self._pill_antigravity_half()
         show_codex = self._pill_codex_half()
         show_opencode = self._pill_opencode_half()
@@ -1893,10 +2004,13 @@ class UsageFloater(tk.Tk):
 
         # Cursor icon+% when online (Grok / Antigravity / Codex / OpenCode only when on).
         # Pace ring only when pill metric is Today's pace and none is sharing the capsule.
-        if show_grok or show_anti or show_codex or show_opencode or metric != "pace":
+        if show_grok or show_grok_com or show_anti or show_codex or show_opencode or metric != "pace":
             grok_text = "—%"
             if show_grok and self._last_grok_bot is not None:
                 grok_text = format_usage_percent(self._last_grok_bot.usage_percent)
+            grok_com_text = "—%"
+            if show_grok_com and self._last_grok_app is not None:
+                grok_com_text = format_usage_percent(self._last_grok_app.usage_percent)
             anti_text = "—%"
             if show_anti and self._last_antigravity is not None:
                 anti_text = format_usage_percent(self._last_antigravity.usage_percent)
@@ -1912,11 +2026,13 @@ class UsageFloater(tk.Tk):
                     "layout": "icons",
                     "show_cursor": True,
                     "show_grok": show_grok,
+                    "show_grok_com": show_grok_com,
                     "show_antigravity": show_anti,
                     "show_codex": show_codex,
                     "show_opencode": show_opencode,
                     "cursor_text": cursor_txt,
                     "grok_text": grok_text,
+                    "grok_com_text": grok_com_text,
                     "antigravity_text": anti_text,
                     "codex_text": codex_text,
                     "opencode_text": opencode_text,
@@ -1979,38 +2095,15 @@ class UsageFloater(tk.Tk):
         self._apply_pill_border(CARD)
 
     def _update_reset_countdown(self) -> None:
-        if self._show_pill_mode() or not self.settings.show_reset_countdown:
+        """Reset hints live on Cursor / Grok row subtexts; hide the old footer line."""
+        if hasattr(self, "reset_label"):
             self.reset_label.pack_forget()
-            return
-        text = self._format_reset_countdown()
-        if not text:
-            self.reset_label.pack_forget()
-            return
-        self.reset_label.configure(text=text)
-        self.reset_label.pack(fill="x", pady=(8, 0), before=self.status_label)
 
     def _format_reset_countdown(self) -> str:
         if self._last_usage is None or not self._last_usage.billing_cycle_end:
             return ""
-        raw = self._last_usage.billing_cycle_end.strip()
-        end = _parse_billing_end(raw)
-        if end is None:
-            return f"Cycle ends: {raw}"
-        now = datetime.now(timezone.utc)
-        if end.tzinfo is None:
-            end = end.replace(tzinfo=timezone.utc)
-        delta = end - now
-        secs = int(delta.total_seconds())
-        if secs <= 0:
-            return "Resets soon"
-        days, rem = divmod(secs, 86400)
-        hours, rem = divmod(rem, 3600)
-        minutes = rem // 60
-        if days > 0:
-            return f"Resets in {days}d {hours}h"
-        if hours > 0:
-            return f"Resets in {hours}h {minutes}m"
-        return f"Resets in {minutes}m"
+        hint = format_resets_in_label(self._last_usage.billing_cycle_end)
+        return hint or ""
 
     def _update_stale_badge(self) -> None:
         if self._show_pill_mode():
@@ -2222,7 +2315,19 @@ class UsageFloater(tk.Tk):
 
     def _poll_tick(self) -> None:
         interval_s = self._poll_interval_ms() / 1000.0
-        if time.monotonic() - self._last_poll_at >= interval_s:
+        login_changed = False
+        try:
+            fp = live_cursor_fingerprint()
+            if self._cursor_fp is not None and fp != self._cursor_fp:
+                login_changed = True
+            stamp = file_stamp(
+                resolve_grok_auth_path(self.settings.grok_app_token_file)
+            )
+            if self._grok_auth_stamp is not None and stamp != self._grok_auth_stamp:
+                login_changed = True
+        except Exception:  # noqa: BLE001
+            login_changed = False
+        if login_changed or time.monotonic() - self._last_poll_at >= interval_s:
             self.refresh_async()
         self.after(POLL_TICK_MS, self._poll_tick)
 
@@ -2291,9 +2396,48 @@ class UsageFloater(tk.Tk):
             cursor_error: str | None = None
             usage_secondary: PlanUsage | None = None
             usage_secondary_error: str | None = None
+            live_token: str | None = None
+            primary_label = cursor_primary_bar_label(self.settings)
+            secondary_label = cursor_secondary_bar_label(self.settings)
+            grok_app: GrokAppUsage | None = None
+            grok_app_error: str | None = None
 
             try:
-                usage = fetch_current_period_usage()
+                live_token = get_access_token()
+                fp = token_fingerprint(live_token)
+                previous = self._cached_cursor_token
+                if (
+                    self.settings.remember_previous_cursor_login
+                    and previous
+                    and token_fingerprint(previous) != fp
+                ):
+                    dest = (self.settings.secondary_cursor_token_file or "").strip()
+                    if not dest:
+                        dest = str(
+                            Path(os.environ.get("APPDATA") or Path.home())
+                            / "cursor-usage-float"
+                            / "previous-cursor.txt"
+                        )
+                        self.settings.secondary_cursor_token_file = dest
+                        save_settings(self.settings)
+                    Path(dest).expanduser().parent.mkdir(parents=True, exist_ok=True)
+                    Path(dest).expanduser().write_text(previous + "\n", encoding="utf-8")
+                self._cached_cursor_token = live_token
+                self._cursor_fp = fp
+                primary_label = cursor_slot_label(
+                    prefix="Cursor",
+                    token=live_token,
+                    override=self.settings.cursor_primary_label,
+                    auto_from_email=False,
+                    fallback=cursor_primary_bar_label(self.settings),
+                )
+                info = get_cursor_account_info()
+                self._cursor_account = info
+            except AuthError:
+                live_token = None
+
+            try:
+                usage = fetch_current_period_usage(token=live_token)
             except (AuthError, UsageError) as exc:
                 cursor_error = str(exc)
             except Exception as exc:  # noqa: BLE001
@@ -2304,9 +2448,21 @@ class UsageFloater(tk.Tk):
                 if token_path:
                     try:
                         token_b = read_access_token_from_file(token_path)
+                        secondary_label = cursor_slot_label(
+                            prefix="Cursor",
+                            token=token_b,
+                            override=self.settings.cursor_secondary_label,
+                            auto_from_email=self.settings.auto_label_from_email,
+                            fallback=cursor_secondary_bar_label(self.settings),
+                        )
                         usage_secondary = fetch_current_period_usage(token=token_b)
                     except (AuthError, UsageError) as exc:
                         usage_secondary_error = str(exc)
+                        if "401" in usage_secondary_error:
+                            usage_secondary_error = (
+                                "Second account token expired or wrong account. "
+                                "Sign in to that Cursor account, Save token, or clear the path."
+                            )
                     except Exception as exc:  # noqa: BLE001
                         usage_secondary_error = f"Unexpected error: {exc}"
 
@@ -2318,6 +2474,18 @@ class UsageFloater(tk.Tk):
                     pass
                 except Exception:  # noqa: BLE001
                     pass
+
+            if self.settings.show_grok_premium:
+                auth_path = resolve_grok_auth_path(self.settings.grok_app_token_file)
+                self._grok_auth_stamp = file_stamp(auth_path)
+                try:
+                    grok_app = fetch_grok_app_usage(
+                        auth_path=self.settings.grok_app_token_file
+                    )
+                except GrokAppError as exc:
+                    grok_app_error = str(exc)
+                except Exception as exc:  # noqa: BLE001
+                    grok_app_error = str(exc)
 
             try:
                 anti = fetch_antigravity_usage()
@@ -2340,12 +2508,16 @@ class UsageFloater(tk.Tk):
             if usage is not None:
                 self.after(
                     0,
-                    lambda u=usage, u2=usage_secondary, u2e=usage_secondary_error, g=grok, g_ok=grok_ok, a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok, o=opencode, o_ok=opencode_ok: self._apply_usage(
+                    lambda u=usage, u2=usage_secondary, u2e=usage_secondary_error, pl=primary_label, sl=secondary_label, g=grok, g_ok=grok_ok, ga=grok_app, gae=grok_app_error, a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok, o=opencode, o_ok=opencode_ok: self._apply_usage(
                         u,
                         usage_secondary=u2,
                         usage_secondary_error=u2e,
+                        primary_label=pl,
+                        secondary_label=sl,
                         grok=g,
                         grok_updated=g_ok,
+                        grok_app=ga,
+                        grok_app_error=gae,
                         antigravity=a,
                         antigravity_updated=a_ok,
                         antigravity_error=ae,
@@ -2358,10 +2530,14 @@ class UsageFloater(tk.Tk):
             else:
                 self.after(
                     0,
-                    lambda m=cursor_error or "Cursor offline", u2=usage_secondary, u2e=usage_secondary_error, a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok, o=opencode, o_ok=opencode_ok: self._apply_error(
+                    lambda m=cursor_error or "Cursor offline", u2=usage_secondary, u2e=usage_secondary_error, pl=primary_label, sl=secondary_label, ga=grok_app, gae=grok_app_error, a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok, o=opencode, o_ok=opencode_ok: self._apply_error(
                         m,
                         usage_secondary=u2,
                         usage_secondary_error=u2e,
+                        primary_label=pl,
+                        secondary_label=sl,
+                        grok_app=ga,
+                        grok_app_error=gae,
                         antigravity=a,
                         antigravity_updated=a_ok,
                         antigravity_error=ae,
@@ -2434,8 +2610,12 @@ class UsageFloater(tk.Tk):
         *,
         usage_secondary: PlanUsage | None = None,
         usage_secondary_error: str | None = None,
+        primary_label: str | None = None,
+        secondary_label: str | None = None,
         grok: GrokBotUsage | None = None,
         grok_updated: bool = True,
+        grok_app: GrokAppUsage | None = None,
+        grok_app_error: str | None = None,
         antigravity: AntigravityUsage | None = None,
         antigravity_updated: bool = True,
         antigravity_error: str | None = None,
@@ -2461,10 +2641,21 @@ class UsageFloater(tk.Tk):
         self._connection_ok = True
         self._last_success_at = datetime.now()
         self.total_row.set_percent(usage.auto_percent)
-        self.total_row.set_subtext(_cursor_subtext(usage))
-        self._apply_cursor_bar_labels()
+        self.total_row.set_subtext(
+            _cursor_subtext(
+                usage,
+                getattr(self, "_cursor_account", None),
+                show_email=self.settings.auto_label_from_email,
+                show_reset=self.settings.show_reset_countdown,
+            )
+        )
+        if primary_label:
+            self.total_row.set_title(primary_label)
+        if secondary_label:
+            self.total_row_secondary.set_title(secondary_label)
         self._apply_secondary_cursor(usage_secondary, usage_secondary_error)
         self._update_dual_cursor_visibility()
+        self._apply_grok_premium(grok_app, grok_app_error)
         self.auto_row.set_percent(usage.auto_percent)
         self.api_row.set_percent(usage.api_percent)
         self._apply_grok_bot(self._last_grok_bot)
@@ -2486,8 +2677,48 @@ class UsageFloater(tk.Tk):
     def _apply_grok_bot(self, grok: GrokBotUsage | None) -> None:
         if grok is None or not grok.is_eligible:
             return
+        self.grok_bot_row.set_title("Grok Bot (Cursor)")
         self.grok_bot_row.set_percent(grok.usage_percent)
-        self.grok_bot_row.set_subtext(_format_grok_bot_subtext(grok))
+        self.grok_bot_row.set_subtext(_format_grok_bot_subtext(grok) + " · Cursor plan, not Grok.com")
+
+    def _apply_grok_premium(
+        self,
+        usage: GrokAppUsage | None,
+        error: str | None,
+    ) -> None:
+        if not hasattr(self, "grok_premium_row"):
+            return
+        self._last_grok_app = usage
+        self._grok_app_error = error
+        if not self._grok_premium_should_show():
+            return
+        if usage is not None and usage.is_eligible:
+            self.grok_premium_row.set_title("Grok")
+            self.grok_premium_row.set_percent(usage.usage_percent)
+            plan = format_grok_plan_label(usage.plan_tier, usage.plan_tier_id)
+            parts: list[str] = []
+            if plan:
+                parts.append(plan)
+            elif usage.plan_tier:
+                parts.append(usage.plan_tier)
+            if usage.email:
+                parts.append(short_email_display(usage.email))
+            if self.settings.show_reset_countdown and usage.period_end:
+                reset_hint = format_resets_in_label(usage.period_end)
+                if reset_hint:
+                    parts.append(reset_hint)
+            if not parts:
+                parts.append("grok.com weekly pool")
+            self.grok_premium_row.set_subtext(" · ".join(parts))
+            return
+        self.grok_premium_row.set_percent(0)
+        self.grok_premium_row.pct_label.configure(text="—%", fg=MUTED)
+        err = error or "Run grok login once (creates ~/.grok/auth.json)"
+        if err and "no access token" in err.lower():
+            err = (
+                "Wrong token file in Settings — leave empty to use ~/.grok/auth.json after grok login."
+            )
+        self.grok_premium_row.set_subtext(err[:120])
 
     def _apply_antigravity(
         self,
@@ -2633,6 +2864,10 @@ class UsageFloater(tk.Tk):
         *,
         usage_secondary: PlanUsage | None = None,
         usage_secondary_error: str | None = None,
+        primary_label: str | None = None,
+        secondary_label: str | None = None,
+        grok_app: GrokAppUsage | None = None,
+        grok_app_error: str | None = None,
         antigravity: AntigravityUsage | None = None,
         antigravity_updated: bool = False,
         antigravity_error: str | None = None,
@@ -2662,6 +2897,11 @@ class UsageFloater(tk.Tk):
             self.total_row.set_subtext(message[:80])
         self._apply_secondary_cursor(usage_secondary, usage_secondary_error)
         self._update_dual_cursor_visibility()
+        if primary_label:
+            self.total_row.set_title(primary_label)
+        if secondary_label:
+            self.total_row_secondary.set_title(secondary_label)
+        self._apply_grok_premium(grok_app, grok_app_error)
         if antigravity_updated or codex_updated or opencode_updated:
             self._update_pill_percent()
         if not self._show_pill_mode():
@@ -2670,6 +2910,29 @@ class UsageFloater(tk.Tk):
             self._update_section_visibility()
         self._paint_status()
         self._resize_to_content()
+
+
+def format_resets_in_label(end_raw: str | None) -> str | None:
+    """Human countdown e.g. 'Resets in 6d 11h' from an ISO or epoch end time."""
+    if not end_raw or not str(end_raw).strip():
+        return None
+    end = _parse_billing_end(str(end_raw).strip())
+    if end is None:
+        return f"Resets {end_raw.strip()}"
+    now = datetime.now(timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    secs = int((end - now).total_seconds())
+    if secs <= 0:
+        return "Resets soon"
+    days, rem = divmod(secs, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    if days > 0:
+        return f"Resets in {days}d {hours}h"
+    if hours > 0:
+        return f"Resets in {hours}h {minutes}m"
+    return f"Resets in {minutes}m"
 
 
 def _parse_billing_end(raw: str) -> datetime | None:
@@ -2694,11 +2957,30 @@ def _parse_billing_end(raw: str) -> datetime | None:
         return None
 
 
-def _cursor_subtext(usage: PlanUsage) -> str:
-    """Row caption: spend label for grant-based plans, else the pool note."""
+def _cursor_subtext(
+    usage: PlanUsage,
+    account: object | None = None,
+    *,
+    show_email: bool = True,
+    show_reset: bool = True,
+) -> str:
+    """Row caption: plan · email · pool note · reset."""
+    from cursor_identity import CursorAccountInfo
+
+    parts: list[str] = []
+    if isinstance(account, CursorAccountInfo) and account.plan_label:
+        parts.append(account.plan_label)
+    if show_email and isinstance(account, CursorAccountInfo) and account.email:
+        parts.append(short_email_display(account.email))
     if usage.source == "grants":
-        return usage.spend_label or "Included usage this period"
-    return "Includes Composer and Cursor Grok models"
+        parts.append(usage.spend_label or "Included usage this period")
+    else:
+        parts.append("Includes Composer and Cursor Grok models")
+    if show_reset and usage.billing_cycle_end:
+        reset_hint = format_resets_in_label(usage.billing_cycle_end)
+        if reset_hint:
+            parts.append(reset_hint)
+    return " · ".join(parts)
 
 
 def _format_opencode_subtext(opencode: OpenCodeUsage) -> str:

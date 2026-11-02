@@ -28,7 +28,10 @@ METRIC_OPTIONS = (
 )
 
 # Never copied to the shared sync folder (tokens / per-PC paths).
-LOCAL_ONLY_SETTINGS = ("secondary_cursor_token_file",)
+LOCAL_ONLY_SETTINGS = (
+    "secondary_cursor_token_file",
+    "grok_app_token_file",
+)
 
 
 @dataclass
@@ -40,6 +43,7 @@ class AppSettings:
     show_reset_countdown: bool = True
     show_stale_badge: bool = True
     show_total: bool = True
+    show_other_models: bool = False
     show_pace: bool = True
     show_grok_bot: bool = True
     show_antigravity: bool = True
@@ -61,6 +65,10 @@ class AppSettings:
     cursor_primary_label: str = ""
     cursor_secondary_label: str = ""
     secondary_cursor_token_file: str = ""
+    auto_label_from_email: bool = True
+    remember_previous_cursor_login: bool = True
+    show_grok_premium: bool = True
+    grok_app_token_file: str = ""
 
 
 def default_settings_path() -> Path:

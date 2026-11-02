@@ -258,8 +258,10 @@ class SettingsWindow(tk.Toplevel):
         for attr, label in (
             ("show_header", "Show header"),
             ("show_total", "Cursor Models"),
+            ("show_other_models", "Other Models (API pool)"),
             ("show_pace", "Today's pace"),
-            ("show_grok_bot", "Grok Bot"),
+            ("show_grok_bot", "Grok Bot (Cursor)"),
+            ("show_grok_premium", "Grok (grok.com)"),
             ("show_antigravity", "Antigravity"),
             ("show_codex", "Codex"),
             ("show_opencode", "OpenCode"),
@@ -288,6 +290,12 @@ class SettingsWindow(tk.Toplevel):
 
         accounts = self._section(body, "Cursor accounts")
         self._add_switch(accounts, "Second account bar", "show_dual_cursor")
+        self._add_switch(accounts, "Label bars from email", "auto_label_from_email")
+        self._add_switch(
+            accounts,
+            "Remember previous Cursor login",
+            "remember_previous_cursor_login",
+        )
         self._add_dual_cursor_rows(accounts)
 
         self._footer = tk.Frame(outer, bg=BG)
@@ -575,6 +583,56 @@ class SettingsWindow(tk.Toplevel):
             font=("Segoe UI", 9),
         ).pack(side="left", padx=(6, 0))
 
+        tk.Label(
+            parent,
+            text="Grok auth file (local, optional)",
+            bg=CARD,
+            fg=TEXT,
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill="x", pady=(12, 0))
+        tk.Label(
+            parent,
+            text="Leave empty to use ~/.grok/auth.json after grok login in Terminal.",
+            bg=CARD,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+            anchor="w",
+            wraplength=280,
+            justify="left",
+        ).pack(fill="x", pady=(0, 4))
+        self._grok_token_var = tk.StringVar(
+            value=(self.settings.grok_app_token_file or "").strip()
+        )
+        tk.Entry(
+            parent,
+            textvariable=self._grok_token_var,
+            font=("Segoe UI", 9),
+            relief="solid",
+            bd=1,
+        ).pack(fill="x", pady=(0, 4))
+
+        def on_grok_token_change(*_args: object) -> None:
+            if self._updating:
+                return
+            self.settings.grok_app_token_file = self._grok_token_var.get().strip()
+            self._persist()
+
+        self._grok_token_var.trace_add("write", on_grok_token_change)
+
+        tk.Button(
+            parent,
+            text="Clear Grok path (use default auth.json)",
+            command=lambda: self._grok_token_var.set(""),
+            bg=CARD,
+            fg=TEXT,
+            relief="flat",
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(0, 8))
+
     def _browse_secondary_token(self) -> None:
         path = filedialog.asksaveasfilename(
             parent=self,
@@ -856,6 +914,10 @@ class SettingsWindow(tk.Toplevel):
             if hasattr(self, "_secondary_token_var"):
                 self._secondary_token_var.set(
                     (settings.secondary_cursor_token_file or "").strip()
+                )
+            if hasattr(self, "_grok_token_var"):
+                self._grok_token_var.set(
+                    (settings.grok_app_token_file or "").strip()
                 )
         finally:
             self._updating = False
