@@ -1,6 +1,20 @@
 from grok_app_usage import parse_grok_billing
 
 
+def test_format_grok_app_error_401() -> None:
+    from grok_app_usage import format_grok_app_error
+
+    assert "expired" in format_grok_app_error("Grok billing HTTP 401").lower()
+    assert "grok login" in format_grok_app_error("Grok billing HTTP 401").lower()
+
+
+def test_grok_error_needs_login_action() -> None:
+    from grok_app_usage import grok_error_needs_login_action
+
+    assert grok_error_needs_login_action("Grok billing HTTP 401")
+    assert not grok_error_needs_login_action("timeout")
+
+
 def test_format_grok_plan_label() -> None:
     from grok_app_usage import format_grok_plan_label
 
@@ -8,6 +22,8 @@ def test_format_grok_plan_label() -> None:
     assert format_grok_plan_label("SuperGrok", None) == "Premium"
     assert format_grok_plan_label(None, "plus") == "Plus"
 
+
+def test_parse_credit_usage_percent() -> None:
     usage = parse_grok_billing(
         {
             "config": {

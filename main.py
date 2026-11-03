@@ -15,8 +15,17 @@ from tkinter import font as tkfont
 from account_slots import cursor_slot_label, short_email_display
 from cursor_auth import AuthError, get_access_token, read_access_token_from_file, token_fingerprint
 from cursor_identity import get_cursor_account_info
-from grok_app_usage import GrokAppError, GrokAppUsage, fetch_grok_app_usage, format_grok_plan_label, resolve_grok_auth_path
+from grok_app_usage import (
+    GrokAppError,
+    GrokAppUsage,
+    fetch_grok_app_usage,
+    format_grok_app_error,
+    format_grok_plan_label,
+    grok_error_needs_login_action,
+    resolve_grok_auth_path,
+)
 from grok_cli_setup import ensure_grok_auth_for_usage, grok_auth_ready
+from grok_login_launcher import launch_grok_login_terminal
 from login_watch import file_stamp, live_cursor_fingerprint
 from cursor_usage import (
     GrokBotUsage,
@@ -35,6 +44,7 @@ from opencode_usage import (
     format_token_count,
 )
 from paths import resource_path
+from pill_icons import load_pill_icons
 from polling import POLL_TICK_MS, SLOW_POLL_MS, poll_interval_ms
 from pace_history import (
     active_pace_history_path,
@@ -581,6 +591,22 @@ class UsageFloater(tk.Tk):
 
         self.grok_premium_row = ProgressRow(self.expanded, "Grok", hero=True)
         self.grok_premium_row.configure(bg=CARD)
+        self.grok_login_btn_frame = tk.Frame(self.expanded, bg=CARD)
+        self.grok_login_btn = tk.Button(
+            self.grok_login_btn_frame,
+            text="Run grok login",
+            command=self._launch_grok_login,
+            bg=CARD,
+            fg=TEXT,
+            activebackground=CARD,
+            activeforeground=TEXT,
+            relief="flat",
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI Semibold", 9),
+        )
+        self.grok_login_btn.pack(anchor="w")
         # Packed only when show_grok_bot and fetch is eligible.
 
         self.antigravity_row = ProgressRow(self.expanded, "Antigravity", hero=True)
@@ -751,19 +777,14 @@ class UsageFloater(tk.Tk):
         self._pill_icon_antigravity: tk.PhotoImage | None = None
         self._pill_icon_codex: tk.PhotoImage | None = None
         self._pill_icon_opencode: tk.PhotoImage | None = None
-
-        def _load_pill_icon(name: str) -> tk.PhotoImage | None:
-            try:
-                return tk.PhotoImage(file=str(resource_path("assets", name)))
-            except tk.TclError:
-                return None
-
-        self._pill_icon_cursor = _load_pill_icon("cursor-mark.png")
-        self._pill_icon_grok = _load_pill_icon("grok-mark.png")
-        self._pill_icon_xai = _load_pill_icon("xai-mark.png")
-        self._pill_icon_antigravity = _load_pill_icon("antigravity-mark.png")
-        self._pill_icon_codex = _load_pill_icon("codex-mark.png")
-        self._pill_icon_opencode = _load_pill_icon("opencode-mark.png")
+        self._pill_image_refs: list[tk.PhotoImage] = []
+        pill_icons, self._pill_image_refs = load_pill_icons(self)
+        self._pill_icon_cursor = pill_icons.get("cursor")
+        self._pill_icon_grok = pill_icons.get("grok")
+        self._pill_icon_xai = pill_icons.get("xai")
+        self._pill_icon_antigravity = pill_icons.get("antigravity")
+        self._pill_icon_codex = pill_icons.get("codex")
+        self._pill_icon_opencode = pill_icons.get("opencode")
         self.pill_face.bind("<Configure>", self._on_pill_configure)
         self.pill_face.bind("<ButtonPress-1>", self._start_drag)
         self.pill_face.bind("<B1-Motion>", self._on_drag)
@@ -1324,6 +1345,7 @@ class UsageFloater(tk.Tk):
             self._apply_grok_premium(self._last_grok_app, self._grok_app_error)
         else:
             self.grok_premium_row.pack_forget()
+            self._show_grok_login_button(False)
 
     def _update_antigravity_visibility(self) -> None:
         if not hasattr(self, "antigravity_row"):
@@ -1726,7 +1748,10 @@ class UsageFloater(tk.Tk):
         first = True
 
         def _divider_then_icon_pct(
-            icon: tk.PhotoImage | None, text: str
+            icon: tk.PhotoImage | None,
+            text: str,
+            *,
+            fallback: str = "",
         ) -> None:
             nonlocal x, first
             if not first:
@@ -1741,11 +1766,27 @@ class UsageFloater(tk.Tk):
                     tags="face",
                 )
                 x += 1 + PILL_DUAL_SECTION_GAP
+            icon_x = x + PILL_ICON / 2
+            drawn = False
             if icon is not None:
-                c.create_image(
-                    x + PILL_ICON / 2,
+                try:
+                    c.create_image(
+                        icon_x,
+                        cy,
+                        image=icon,
+                        anchor="center",
+                        tags="face",
+                    )
+                    drawn = True
+                except tk.TclError:
+                    drawn = False
+            if not drawn and fallback:
+                c.create_text(
+                    icon_x,
                     cy,
-                    image=icon,
+                    text=fallback,
+                    fill=TEXT,
+                    font=("Segoe UI Semibold", 9),
                     anchor="center",
                     tags="face",
                 )
@@ -1766,35 +1807,41 @@ class UsageFloater(tk.Tk):
             _divider_then_icon_pct(
                 self._pill_icon_cursor,
                 str(view.get("cursor_text") or "—%"),
+                fallback="C",
             )
         if view.get("show_grok"):
             _divider_then_icon_pct(
                 self._pill_icon_grok,
                 str(view.get("grok_text") or "—%"),
+                fallback="G",
             )
         if view.get("show_grok_com"):
             _divider_then_icon_pct(
                 self._pill_icon_xai,
                 str(view.get("grok_com_text") or "—%"),
+                fallback="X",
             )
         if view.get("show_antigravity"):
             _divider_then_icon_pct(
                 self._pill_icon_antigravity,
                 str(view.get("antigravity_text") or "—%"),
+                fallback="A",
             )
         if view.get("show_codex"):
             _divider_then_icon_pct(
                 self._pill_icon_codex,
                 str(view.get("codex_text") or "—%"),
+                fallback="D",
             )
         if view.get("show_opencode"):
             _divider_then_icon_pct(
                 self._pill_icon_opencode,
                 str(view.get("opencode_text") or "—%"),
+                fallback="O",
             )
         if first:
             # Nothing eligible yet — keep a compact placeholder.
-            _divider_then_icon_pct(self._pill_icon_cursor, "—%")
+            _divider_then_icon_pct(self._pill_icon_cursor, "—%", fallback="C")
 
         cue = str(view.get("cue") or "")
         if cue:
@@ -2713,15 +2760,37 @@ class UsageFloater(tk.Tk):
             if not parts:
                 parts.append("grok.com weekly pool")
             self.grok_premium_row.set_subtext(" · ".join(parts))
+            self._show_grok_login_button(False)
             return
         self.grok_premium_row.set_percent(0)
         self.grok_premium_row.pct_label.configure(text="—%", fg=MUTED)
-        err = error or "Installing Grok CLI / waiting for grok login…"
-        if err and "no access token" in err.lower():
-            err = (
-                "Wrong token file in Settings — leave empty to use ~/.grok/auth.json after grok login."
+        err = format_grok_app_error(
+            error or "Installing Grok CLI / waiting for grok login…"
+        )
+        self.grok_premium_row.set_subtext(err)
+        self._show_grok_login_button(grok_error_needs_login_action(error or err))
+
+    def _show_grok_login_button(self, visible: bool) -> None:
+        if not hasattr(self, "grok_login_btn_frame"):
+            return
+        if visible and self._grok_premium_should_show():
+            if not self.grok_login_btn_frame.winfo_ismapped():
+                self.grok_login_btn_frame.pack(
+                    fill="x",
+                    pady=(4, 0),
+                    after=self.grok_premium_row,
+                )
+        else:
+            self.grok_login_btn_frame.pack_forget()
+
+    def _launch_grok_login(self) -> None:
+        ok, msg = launch_grok_login_terminal()
+        if ok:
+            self.status_label.configure(
+                text="Terminal opened — finish grok login, then refresh"
             )
-        self.grok_premium_row.set_subtext(err[:120])
+        else:
+            self.status_label.configure(text=msg[:120])
 
     def _apply_antigravity(
         self,

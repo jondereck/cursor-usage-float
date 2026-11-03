@@ -19,6 +19,57 @@ class GrokAppError(Exception):
     """Raised when Grok Premium usage cannot be read."""
 
 
+def grok_access_token_expired(token: str, *, skew_seconds: int = 60) -> bool:
+    """True when JWT exp is in the past (Grok CLI access tokens are short-lived)."""
+    import base64
+    import json
+    import time
+
+    parts = (token or "").split(".")
+    if len(parts) < 2:
+        return False
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)
+    try:
+        data = json.loads(base64.urlsafe_b64decode(payload))
+    except (json.JSONDecodeError, ValueError):
+        return False
+    exp = data.get("exp")
+    if not isinstance(exp, (int, float)):
+        return False
+    return float(exp) <= time.time() + skew_seconds
+
+
+def format_grok_app_error(message: str) -> str:
+    """User-facing Grok row error (no raw HTTP codes when we can help)."""
+    text = (message or "").strip()
+    lower = text.lower()
+    if "401" in text or "expired" in lower or "invalid or expired" in lower:
+        return "Grok login expired. Run grok login, then refresh."
+    if "no access token" in lower:
+        return "Wrong Grok auth file in Settings — clear path to use ~/.grok/auth.json."
+    if "not found" in lower and "grok login" in lower:
+        return text
+    return text[:120]
+
+
+def grok_error_needs_login_action(message: str | None) -> bool:
+    if not message:
+        return False
+    lower = message.lower()
+    return any(
+        needle in lower
+        for needle in (
+            "expired",
+            "401",
+            "grok login",
+            "no access token",
+            "not found",
+            "invalid or expired",
+        )
+    )
+
+
 @dataclass(frozen=True)
 class GrokAppUsage:
     usage_percent: float
@@ -191,6 +242,8 @@ def _fetch_grok_settings_tiers(access: str) -> tuple[str | None, str | None]:
 def fetch_grok_app_usage(token: str | None = None, auth_path: str | None = None) -> GrokAppUsage:
     path = resolve_grok_auth_path(auth_path or "")
     access = token if token is not None else read_grok_access_token(path)
+    if grok_access_token_expired(access):
+        raise GrokAppError(format_grok_app_error("Grok login expired"))
     request = urllib.request.Request(
         BILLING_URL,
         headers={
@@ -205,6 +258,8 @@ def fetch_grok_app_usage(token: str | None = None, auth_path: str | None = None)
         with urllib.request.urlopen(request, timeout=20, context=ssl.create_default_context()) as resp:
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            raise GrokAppError(format_grok_app_error("Grok billing HTTP 401")) from exc
         raise GrokAppError(f"Grok billing HTTP {exc.code}") from exc
     except urllib.error.URLError as exc:
         raise GrokAppError(f"Grok billing unreachable: {exc.reason}") from exc
