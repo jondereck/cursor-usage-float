@@ -16,6 +16,7 @@ from account_slots import cursor_slot_label, short_email_display
 from cursor_auth import AuthError, get_access_token, read_access_token_from_file, token_fingerprint
 from cursor_identity import get_cursor_account_info
 from grok_app_usage import GrokAppError, GrokAppUsage, fetch_grok_app_usage, format_grok_plan_label, resolve_grok_auth_path
+from grok_cli_setup import ensure_grok_auth_for_usage, grok_auth_ready
 from login_watch import file_stamp, live_cursor_fingerprint
 from cursor_usage import (
     GrokBotUsage,
@@ -750,32 +751,19 @@ class UsageFloater(tk.Tk):
         self._pill_icon_antigravity: tk.PhotoImage | None = None
         self._pill_icon_codex: tk.PhotoImage | None = None
         self._pill_icon_opencode: tk.PhotoImage | None = None
-        try:
-            self._pill_icon_cursor = tk.PhotoImage(
-                file=str(resource_path("assets", "cursor-mark.png"))
-            )
-            self._pill_icon_grok = tk.PhotoImage(
-                file=str(resource_path("assets", "grok-mark.png"))
-            )
-            self._pill_icon_xai = tk.PhotoImage(
-                file=str(resource_path("assets", "xai-mark.png"))
-            )
-            self._pill_icon_antigravity = tk.PhotoImage(
-                file=str(resource_path("assets", "antigravity-mark.png"))
-            )
-            self._pill_icon_codex = tk.PhotoImage(
-                file=str(resource_path("assets", "codex-mark.png"))
-            )
-            self._pill_icon_opencode = tk.PhotoImage(
-                file=str(resource_path("assets", "opencode-mark.png"))
-            )
-        except tk.TclError:
-            self._pill_icon_cursor = None
-            self._pill_icon_grok = None
-            self._pill_icon_xai = None
-            self._pill_icon_antigravity = None
-            self._pill_icon_codex = None
-            self._pill_icon_opencode = None
+
+        def _load_pill_icon(name: str) -> tk.PhotoImage | None:
+            try:
+                return tk.PhotoImage(file=str(resource_path("assets", name)))
+            except tk.TclError:
+                return None
+
+        self._pill_icon_cursor = _load_pill_icon("cursor-mark.png")
+        self._pill_icon_grok = _load_pill_icon("grok-mark.png")
+        self._pill_icon_xai = _load_pill_icon("xai-mark.png")
+        self._pill_icon_antigravity = _load_pill_icon("antigravity-mark.png")
+        self._pill_icon_codex = _load_pill_icon("codex-mark.png")
+        self._pill_icon_opencode = _load_pill_icon("opencode-mark.png")
         self.pill_face.bind("<Configure>", self._on_pill_configure)
         self.pill_face.bind("<ButtonPress-1>", self._start_drag)
         self.pill_face.bind("<B1-Motion>", self._on_drag)
@@ -2478,14 +2466,29 @@ class UsageFloater(tk.Tk):
             if self.settings.show_grok_premium:
                 auth_path = resolve_grok_auth_path(self.settings.grok_app_token_file)
                 self._grok_auth_stamp = file_stamp(auth_path)
-                try:
-                    grok_app = fetch_grok_app_usage(
-                        auth_path=self.settings.grok_app_token_file
+                custom_grok = (self.settings.grok_app_token_file or "").strip()
+                if grok_auth_ready(auth_path):
+                    try:
+                        grok_app = fetch_grok_app_usage(
+                            auth_path=self.settings.grok_app_token_file
+                        )
+                    except GrokAppError as exc:
+                        grok_app_error = str(exc)
+                    except Exception as exc:  # noqa: BLE001
+                        grok_app_error = str(exc)
+                elif not custom_grok:
+                    grok_app_error = ensure_grok_auth_for_usage(
+                        self.settings.grok_app_token_file
                     )
-                except GrokAppError as exc:
-                    grok_app_error = str(exc)
-                except Exception as exc:  # noqa: BLE001
-                    grok_app_error = str(exc)
+                else:
+                    try:
+                        grok_app = fetch_grok_app_usage(
+                            auth_path=self.settings.grok_app_token_file
+                        )
+                    except GrokAppError as exc:
+                        grok_app_error = str(exc)
+                    except Exception as exc:  # noqa: BLE001
+                        grok_app_error = str(exc)
 
             try:
                 anti = fetch_antigravity_usage()
@@ -2713,7 +2716,7 @@ class UsageFloater(tk.Tk):
             return
         self.grok_premium_row.set_percent(0)
         self.grok_premium_row.pct_label.configure(text="—%", fg=MUTED)
-        err = error or "Run grok login once (creates ~/.grok/auth.json)"
+        err = error or "Installing Grok CLI / waiting for grok login…"
         if err and "no access token" in err.lower():
             err = (
                 "Wrong token file in Settings — leave empty to use ~/.grok/auth.json after grok login."

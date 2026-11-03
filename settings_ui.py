@@ -8,6 +8,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from app_version import format_version_footer, whats_new_unread
 from cursor_auth import AuthError, export_access_token_to_file
+from grok_cli_setup import find_grok_executable, install_grok_cli_via_npm, launch_grok_login
 from pace_history import apply_pace_sync_folder
 from paths import resource_path
 from settings import (
@@ -593,7 +594,7 @@ class SettingsWindow(tk.Toplevel):
         ).pack(fill="x", pady=(12, 0))
         tk.Label(
             parent,
-            text="Leave empty to use ~/.grok/auth.json after grok login in Terminal.",
+            text="Leave empty for ~/.grok/auth.json — if missing, the app installs @xai-official/grok and opens grok login.",
             bg=CARD,
             fg=MUTED,
             font=("Segoe UI", 8),
@@ -620,8 +621,22 @@ class SettingsWindow(tk.Toplevel):
 
         self._grok_token_var.trace_add("write", on_grok_token_change)
 
+        grok_btn_row = tk.Frame(parent, bg=CARD)
+        grok_btn_row.pack(fill="x", pady=(0, 8))
         tk.Button(
-            parent,
+            grok_btn_row,
+            text="Run grok login",
+            command=self._run_grok_login,
+            bg=CARD,
+            fg=TEXT,
+            relief="flat",
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9),
+        ).pack(side="left")
+        tk.Button(
+            grok_btn_row,
             text="Clear Grok path (use default auth.json)",
             command=lambda: self._grok_token_var.set(""),
             bg=CARD,
@@ -631,7 +646,21 @@ class SettingsWindow(tk.Toplevel):
             pady=4,
             cursor="hand2",
             font=("Segoe UI", 9),
-        ).pack(anchor="w", pady=(0, 8))
+        ).pack(side="left", padx=(6, 0))
+
+    def _run_grok_login(self) -> None:
+        grok = find_grok_executable()
+        if grok is None:
+            ok, detail = install_grok_cli_via_npm()
+            if not ok:
+                messagebox.showwarning("Cursor Usage", detail, parent=self)
+                return
+            grok = find_grok_executable()
+        ok, msg = launch_grok_login(grok=grok)
+        if ok:
+            messagebox.showinfo("Cursor Usage", msg, parent=self)
+        else:
+            messagebox.showwarning("Cursor Usage", msg, parent=self)
 
     def _browse_secondary_token(self) -> None:
         path = filedialog.asksaveasfilename(

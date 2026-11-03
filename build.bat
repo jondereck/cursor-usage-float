@@ -43,6 +43,7 @@ echo Building portable exe...
   --add-data "assets\app.ico;assets" ^
   --add-data "assets\cursor-mark.png;assets" ^
   --add-data "assets\grok-mark.png;assets" ^
+  --add-data "assets\xai-mark.png;assets" ^
   --add-data "assets\antigravity-mark.png;assets" ^
   --add-data "assets\codex-mark.png;assets" ^
   --add-data "assets\opencode-mark.png;assets" ^

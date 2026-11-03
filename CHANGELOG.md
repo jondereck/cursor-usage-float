@@ -10,6 +10,9 @@ Bump `version.json` when you add a section (newest first).
 - Settings toggle **Other Models (API pool)** (off by default).
 
 ### Changed
+- Grok (grok.com): when `~/.grok/auth.json` is missing, auto `npm i -g @xai-official/grok` (once) and open `grok login`.
+- Settings **Run grok login** button (install CLI if needed, then browser sign-in).
+- PyInstaller build bundles `xai-mark.png` so pill icons no longer all disappear in the `.exe`.
 - Grok auth falls back to `~/.grok/auth.json` when a custom token path is invalid or a Cursor export `.txt`.
 - Second account bar stays hidden when the saved token fails; login watch no longer forces dual bar on.
 
