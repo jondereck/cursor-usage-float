@@ -20,6 +20,7 @@ from settings import (
 )
 from sync_status import format_last_backup, inspect_sync_status
 from theme import (
+    ACCENT,
     BG,
     BORDER,
     CARD,
@@ -300,6 +301,9 @@ class SettingsWindow(tk.Toplevel):
             "remember_previous_cursor_login",
         )
         self._add_dual_cursor_rows(accounts)
+
+        grok_acc = self._section(body, "Grok account (grok.com)")
+        self._add_grok_account_rows(grok_acc)
 
         self._footer = tk.Frame(outer, bg=BG)
         self._footer.pack(fill="x", pady=(12, 0))
@@ -586,17 +590,59 @@ class SettingsWindow(tk.Toplevel):
             font=("Segoe UI", 9),
         ).pack(side="left", padx=(6, 0))
 
+    def _add_grok_account_rows(self, parent: tk.Misc) -> None:
         tk.Label(
             parent,
-            text="Grok auth file (local, optional)",
+            text=(
+                "Weekly usage pool from grok.com via the Grok CLI. "
+                "Click below to sign in or refresh your login credentials."
+            ),
+            bg=CARD,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+            anchor="w",
+            wraplength=280,
+            justify="left",
+        ).pack(fill="x", pady=(0, 8))
+
+        grok_btn_row = tk.Frame(parent, bg=CARD)
+        grok_btn_row.pack(fill="x", pady=(0, 10))
+        tk.Button(
+            grok_btn_row,
+            text="Run grok login",
+            command=self._run_grok_login,
+            bg=ACCENT,
+            fg="#FFFFFF",
+            relief="flat",
+            padx=12,
+            pady=5,
+            cursor="hand2",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side="left")
+        tk.Button(
+            grok_btn_row,
+            text="Clear custom path",
+            command=lambda: self._grok_token_var.set(""),
+            bg=CARD,
+            fg=TEXT,
+            relief="flat",
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9),
+        ).pack(side="left", padx=(6, 0))
+
+        tk.Label(
+            parent,
+            text="Custom auth file (optional)",
             bg=CARD,
             fg=TEXT,
             font=("Segoe UI", 9),
             anchor="w",
-        ).pack(fill="x", pady=(12, 0))
+        ).pack(fill="x", pady=(4, 0))
         tk.Label(
             parent,
-            text="Leave empty for ~/.grok/auth.json — if missing, the app installs @xai-official/grok and opens grok login.",
+            text="Leave empty for ~/.grok/auth.json (created automatically by grok login).",
             bg=CARD,
             fg=MUTED,
             font=("Segoe UI", 8),
@@ -623,33 +669,6 @@ class SettingsWindow(tk.Toplevel):
 
         self._grok_token_var.trace_add("write", on_grok_token_change)
 
-        grok_btn_row = tk.Frame(parent, bg=CARD)
-        grok_btn_row.pack(fill="x", pady=(0, 8))
-        tk.Button(
-            grok_btn_row,
-            text="Run grok login",
-            command=self._run_grok_login,
-            bg=CARD,
-            fg=TEXT,
-            relief="flat",
-            padx=10,
-            pady=4,
-            cursor="hand2",
-            font=("Segoe UI", 9),
-        ).pack(side="left")
-        tk.Button(
-            grok_btn_row,
-            text="Clear Grok path (use default auth.json)",
-            command=lambda: self._grok_token_var.set(""),
-            bg=CARD,
-            fg=TEXT,
-            relief="flat",
-            padx=10,
-            pady=4,
-            cursor="hand2",
-            font=("Segoe UI", 9),
-        ).pack(side="left", padx=(6, 0))
-
     def _run_grok_login(self) -> None:
         grok = find_grok_executable()
         if grok is None:
@@ -658,7 +677,7 @@ class SettingsWindow(tk.Toplevel):
                 messagebox.showwarning("Cursor Usage", detail, parent=self)
                 return
             grok = find_grok_executable()
-        ok, msg = launch_grok_login(grok=grok)
+        ok, msg = launch_grok_login(grok=grok, force=True)
         if ok:
             messagebox.showinfo("Cursor Usage", msg, parent=self)
         else:

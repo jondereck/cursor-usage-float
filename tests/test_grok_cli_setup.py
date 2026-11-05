@@ -39,3 +39,28 @@ def test_install_grok_cli_calls_npm(monkeypatch, tmp_path: Path) -> None:
     assert ok is True
     assert setup.GROK_NPM_PACKAGE in " ".join(calls[0])
     assert "Installed" in msg
+
+
+def test_launch_grok_login_force(monkeypatch, tmp_path: Path) -> None:
+    fake_grok = tmp_path / "grok.cmd"
+    fake_grok.write_text("@echo off\n", encoding="utf-8")
+    monkeypatch.setattr(setup, "find_grok_executable", lambda: fake_grok)
+
+    calls: list[list[str]] = []
+
+    def fake_popen(argv, **_kwargs):
+        calls.append(list(argv))
+
+    monkeypatch.setattr(setup.subprocess, "Popen", fake_popen)
+    setup._state.last_login_launch = setup.time.monotonic()
+
+    # Without force: throttled by cooldown
+    ok, msg = setup.launch_grok_login(force=False)
+    assert ok is True
+    assert len(calls) == 0
+
+    # With force: immediately launches
+    ok, msg = setup.launch_grok_login(force=True)
+    assert ok is True
+    assert len(calls) == 1
+    assert "grok" in " ".join(calls[0]).lower()

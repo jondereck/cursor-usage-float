@@ -45,7 +45,7 @@ def format_grok_app_error(message: str) -> str:
     text = (message or "").strip()
     lower = text.lower()
     if "401" in text or "expired" in lower or "invalid or expired" in lower:
-        return "Grok login expired. Run grok login, then refresh."
+        return "Grok login expired. Run grok login in Settings."
     if "no access token" in lower:
         return "Wrong Grok auth file in Settings — clear path to use ~/.grok/auth.json."
     if "not found" in lower and "grok login" in lower:

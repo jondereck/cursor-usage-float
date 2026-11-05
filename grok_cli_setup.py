@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,20 +70,23 @@ def install_grok_cli_via_npm(*, timeout_s: int = 180) -> tuple[bool, str]:
     return True, f"Installed {GROK_NPM_PACKAGE}."
 
 
-def launch_grok_login(*, grok: Path | None = None) -> tuple[bool, str]:
+def launch_grok_login(*, grok: Path | None = None, force: bool = False) -> tuple[bool, str]:
     exe = grok or find_grok_executable()
     if exe is None:
         return False, "grok CLI not found after install."
     now = time.monotonic()
-    if now - _state.last_login_launch < LOGIN_COOLDOWN_S:
+    if not force and (now - _state.last_login_launch < LOGIN_COOLDOWN_S):
         return True, _state.last_status or "Finish grok login in your browser…"
     _state.last_login_launch = now
-    cmd = f'"{exe}" login'
     try:
-        subprocess.Popen(
-            ["cmd.exe", "/c", "start", "Grok login", "cmd", "/k", cmd],
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+        if sys.platform == "win32":
+            create_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+            subprocess.Popen(
+                ["cmd.exe", "/k", str(exe), "login"],
+                creationflags=create_flags,
+            )
+        else:
+            subprocess.Popen([str(exe), "login"])
     except OSError as exc:
         return False, f"Could not open grok login: {exc}"
     msg = "Opened grok login — complete sign-in in the browser, then refresh."

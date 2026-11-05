@@ -163,7 +163,13 @@ def _discover_language_server() -> tuple[int, str, str]:
             except (psutil.AccessDenied, psutil.NoSuchProcess):
                 continue
             for connection in connections:
-                if connection.status != psutil.CONN_LISTEN or not connection.laddr:
+                if not connection.laddr:
+                    continue
+                if connection.status not in (
+                    psutil.CONN_LISTEN,
+                    psutil.CONN_NONE,
+                    psutil.CONN_ESTABLISHED,
+                ):
                     continue
                 address = connection.laddr.ip
                 if address not in ("127.0.0.1", "0.0.0.0", "::1", "::"):

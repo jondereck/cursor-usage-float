@@ -2834,19 +2834,11 @@ class UsageFloater(tk.Tk):
 
     def _grok_relogin_from_notification(self) -> None:
         self._on_tray_show()
-        self._launch_grok_login()
+        self._open_settings()
 
     def _show_grok_login_button(self, visible: bool) -> None:
-        if not hasattr(self, "grok_login_btn_frame"):
-            return
-        if visible and self._grok_premium_should_show():
-            if not self.grok_login_btn_frame.winfo_ismapped():
-                self.grok_login_btn_frame.pack(
-                    fill="x",
-                    pady=(4, 0),
-                    after=self.grok_premium_row,
-                )
-        else:
+        # Keep floating widget clean; grok login button is managed in Settings
+        if hasattr(self, "grok_login_btn_frame") and self.grok_login_btn_frame.winfo_ismapped():
             self.grok_login_btn_frame.pack_forget()
 
     def _launch_grok_login(self) -> None:
