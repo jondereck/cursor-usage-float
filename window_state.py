@@ -73,6 +73,39 @@ def clamp_position(
     return max(min_x, min(int(x), max_x)), max(min_y, min(int(y), max_y))
 
 
+def position_after_resize(
+    x: int,
+    y: int,
+    *,
+    old_width: int,
+    old_height: int,
+    new_width: int,
+    new_height: int,
+    bounds: tuple[int, int, int, int],
+) -> tuple[int, int]:
+    """Position a resized window so it stays inside the work area.
+
+    ``bounds`` is ``(left, top, right, bottom)``. The top-left corner is kept
+    when the new size fits; otherwise the window grows away from the nearest
+    edge (a pill near the bottom screen edge expands upward, one near the
+    right edge expands leftward) and is finally clamped on-screen.
+    """
+    left, top, right, bottom = (int(v) for v in bounds)
+    old_w = max(1, int(old_width))
+    old_h = max(1, int(old_height))
+    new_w = max(1, int(new_width))
+    new_h = max(1, int(new_height))
+    px = int(x)
+    py = int(y)
+    if px + new_w > right:
+        px = px + old_w - new_w
+    if py + new_h > bottom:
+        py = py + old_h - new_h
+    max_x = max(left, right - new_w)
+    max_y = max(top, bottom - new_h)
+    return max(left, min(px, max_x)), max(top, min(py, max_y))
+
+
 def load_window_state(path: Path | None = None) -> WindowState | None:
     settings_path = path or default_window_state_path()
     if not settings_path.is_file():

@@ -2,6 +2,14 @@
 
 Bump `version.json` when you add a section (newest first).
 
+## 1.2.4 — 2026-11-05
+
+### Fixed
+- **Pill near the bottom edge now expands upward.** The panel flips away from
+  the screen edge (and leftward when the pill is near the right edge) so the
+  whole window stays visible above the taskbar. Collapsing puts the pill back
+  exactly where you clicked it.
+
 ## 1.2.3 — 2026-11-04
 
 ### Added

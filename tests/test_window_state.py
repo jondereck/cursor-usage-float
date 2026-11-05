@@ -9,6 +9,7 @@ from window_state import (
     WindowState,
     clamp_position,
     load_window_state,
+    position_after_resize,
     save_window_state,
 )
 
@@ -80,3 +81,74 @@ def test_clamp_position_allows_second_monitor_to_the_left() -> None:
     )
     assert x == -1500
     assert y == 40
+
+
+def test_position_after_resize_keeps_top_left_when_it_fits() -> None:
+    x, y = position_after_resize(
+        300,
+        100,
+        old_width=110,
+        old_height=36,
+        new_width=300,
+        new_height=420,
+        bounds=(0, 0, 1920, 1040),
+    )
+    assert (x, y) == (300, 100)
+
+
+def test_position_after_resize_flips_up_near_bottom() -> None:
+    # Pill bottom sits just above the taskbar; the panel must open upward and
+    # keep the same bottom edge instead of disappearing off-screen.
+    x, y = position_after_resize(
+        600,
+        980,
+        old_width=110,
+        old_height=36,
+        new_width=300,
+        new_height=420,
+        bounds=(0, 0, 1920, 1040),
+    )
+    assert x == 600
+    assert y + 420 == 980 + 36
+
+
+def test_position_after_resize_flips_left_near_right_edge() -> None:
+    x, y = position_after_resize(
+        1800,
+        200,
+        old_width=110,
+        old_height=36,
+        new_width=300,
+        new_height=420,
+        bounds=(0, 0, 1920, 1040),
+    )
+    assert x + 300 == 1800 + 110
+    assert y == 200
+
+
+def test_position_after_resize_clamps_oversized_window() -> None:
+    x, y = position_after_resize(
+        900,
+        900,
+        old_width=110,
+        old_height=36,
+        new_width=3000,
+        new_height=2000,
+        bounds=(0, 0, 1920, 1040),
+    )
+    assert (x, y) == (0, 0)
+
+
+def test_position_after_resize_respects_monitor_origin() -> None:
+    # Secondary monitor left of primary: work area starts at negative x.
+    x, y = position_after_resize(
+        -2000,
+        100,
+        old_width=110,
+        old_height=36,
+        new_width=300,
+        new_height=420,
+        bounds=(-1920, 0, 0, 1040),
+    )
+    assert x == -1920
+    assert y == 100

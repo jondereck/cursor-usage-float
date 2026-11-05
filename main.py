@@ -110,6 +110,7 @@ from win_app_icon import apply_tk_icon, set_app_user_model_id
 from win_clickthrough import (
     TRANSPARENT_KEY,
     clear_window_region,
+    get_monitor_work_area,
     get_window_pos,
     set_click_through,
     set_color_key,
@@ -127,6 +128,7 @@ from window_state import (
     WindowState,
     clamp_position,
     load_window_state,
+    position_after_resize,
     save_window_state,
     virtual_screen_bounds,
 )
@@ -476,6 +478,8 @@ class UsageFloater(tk.Tk):
             self._minimized = bool(self.settings.start_minimized)
             self._force_expanded = False
         self._placed = False
+        # Where the pill was before expanding, so collapsing can return it.
+        self._pill_anchor: tuple[int, int] | None = None
         self._animating = False
         self._anim_job: str | None = None
         self._pulse_job: str | None = None
@@ -1030,6 +1034,13 @@ class UsageFloater(tk.Tk):
             anchor_x, anchor_y = pos[0], pos[1]
         else:
             anchor_x, anchor_y = int(self.winfo_x()), int(self.winfo_y())
+        old_w = max(int(self.winfo_width()), 1)
+        old_h = max(int(self.winfo_height()), 1)
+        if was_pill and not want_pill:
+            # Remember where the pill was so collapsing can put it back.
+            self._pill_anchor = (anchor_x, anchor_y)
+        elif want_pill and not was_pill and self._pill_anchor is not None:
+            anchor_x, anchor_y = self._pill_anchor
         self._was_pill = want_pill
         self._animating = True
 
@@ -1039,9 +1050,32 @@ class UsageFloater(tk.Tk):
             end_w, end_h = self._target_size()
             self.geometry(f"{end_w}x{end_h}")
             hwnd = toplevel_hwnd(self)
-            # Same top-left as before the toggle (do not pin-right / slide).
-            if not set_window_pos(hwnd, anchor_x, anchor_y):
-                self.geometry(f"{end_w}x{end_h}+{anchor_x}+{anchor_y}")
+            if want_pill and self._pill_anchor is not None:
+                # Back to the exact spot the pill was clicked from.
+                new_x, new_y = position_after_resize(
+                    anchor_x,
+                    anchor_y,
+                    old_width=end_w,
+                    old_height=end_h,
+                    new_width=end_w,
+                    new_height=end_h,
+                    bounds=self._work_area(),
+                )
+                self._pill_anchor = None
+            else:
+                # Flip away from screen edges: a pill near the bottom expands
+                # upward instead of opening off-screen behind the taskbar.
+                new_x, new_y = position_after_resize(
+                    anchor_x,
+                    anchor_y,
+                    old_width=old_w,
+                    old_height=old_h,
+                    new_width=end_w,
+                    new_height=end_h,
+                    bounds=self._work_area(),
+                )
+            if not set_window_pos(hwnd, new_x, new_y):
+                self.geometry(f"{end_w}x{end_h}+{new_x}+{new_y}")
             self._apply_rounded_corners(end_w, end_h)
             self._paint_status()
             self._update_pill_percent()
@@ -2248,6 +2282,18 @@ class UsageFloater(tk.Tk):
         except Exception:
             pass
 
+    def _work_area(self) -> tuple[int, int, int, int]:
+        """Usable screen area (taskbar excluded) for the current monitor."""
+        area = get_monitor_work_area(toplevel_hwnd(self))
+        if area is not None:
+            return area
+        return (
+            0,
+            0,
+            max(1, int(self.winfo_screenwidth())),
+            max(1, int(self.winfo_screenheight())),
+        )
+
     def _resize_to_content(self, *, pin_right: bool = False) -> None:
         width, height = self._target_size()
         hwnd = toplevel_hwnd(self)
@@ -2255,11 +2301,18 @@ class UsageFloater(tk.Tk):
         cur_x = pos[0] if pos is not None else int(self.winfo_x())
         cur_y = pos[1] if pos is not None else int(self.winfo_y())
         cur_w = max(self.winfo_width(), 1)
+        cur_h = max(self.winfo_height(), 1)
         if pin_right:
-            x = cur_x + cur_w - width
-            y = cur_y
-        else:
-            x, y = cur_x, cur_y
+            cur_x = cur_x + cur_w - width
+        x, y = position_after_resize(
+            cur_x,
+            cur_y,
+            old_width=cur_w,
+            old_height=cur_h,
+            new_width=width,
+            new_height=height,
+            bounds=self._work_area(),
+        )
         self.geometry(f"{width}x{height}")
         if not set_window_pos(hwnd, x, y):
             self.geometry(f"{width}x{height}+{x}+{y}")
@@ -2346,6 +2399,10 @@ class UsageFloater(tk.Tk):
         hwnd = toplevel_hwnd(self)
         if not set_window_pos(hwnd, x, y):
             self.geometry(f"+{x}+{y}")
+        if not self._show_pill_mode():
+            # User chose a new spot for the expanded panel; don't snap the
+            # eventual pill back to the old pre-expand location.
+            self._pill_anchor = None
 
     def _end_drag(self, event: tk.Event) -> None:
         self._persist_window_state()

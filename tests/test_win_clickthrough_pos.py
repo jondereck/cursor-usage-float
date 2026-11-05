@@ -6,7 +6,12 @@ import sys
 
 import pytest
 
-from win_clickthrough import get_window_pos, set_window_pos, toplevel_hwnd
+from win_clickthrough import (
+    get_monitor_work_area,
+    get_window_pos,
+    set_window_pos,
+    toplevel_hwnd,
+)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
@@ -28,3 +33,18 @@ def test_get_set_window_pos_round_trip() -> None:
     assert pos[1] == 90
 
     root.destroy()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_monitor_work_area_is_sane() -> None:
+    import ctypes
+
+    # No Tk needed — the desktop window always has a nearest monitor.
+    desktop = ctypes.windll.user32.GetDesktopWindow()
+    area = get_monitor_work_area(desktop)
+
+    assert area is not None
+    left, top, right, bottom = area
+    # A work area is a real rectangle, never empty.
+    assert right > left
+    assert bottom > top

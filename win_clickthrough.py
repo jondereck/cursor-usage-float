@@ -68,6 +68,51 @@ def get_window_pos(hwnd: int) -> tuple[int, int] | None:
         return None
 
 
+def get_monitor_work_area(hwnd: int) -> tuple[int, int, int, int] | None:
+    """Return ``(left, top, right, bottom)`` of the monitor work area for hwnd.
+
+    The work area is the monitor minus the taskbar and other appbars, which is
+    what a floating window must fit into to stay fully visible.
+    """
+    if sys.platform != "win32" or not hwnd:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", wintypes.LONG),
+                ("top", wintypes.LONG),
+                ("right", wintypes.LONG),
+                ("bottom", wintypes.LONG),
+            ]
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("rcMonitor", RECT),
+                ("rcWork", RECT),
+                ("dwFlags", wintypes.DWORD),
+            ]
+
+        MONITOR_DEFAULTTONEAREST = 2
+        user32 = ctypes.windll.user32
+        monitor = user32.MonitorFromWindow(int(hwnd), MONITOR_DEFAULTTONEAREST)
+        if not monitor:
+            return None
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None
+        rect = info.rcWork
+        if rect.right <= rect.left or rect.bottom <= rect.top:
+            return None
+        return int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
+    except Exception:
+        return None
+
+
 def set_window_pos(hwnd: int, x: int, y: int) -> bool:
     """Move window with SetWindowPos (works across monitors; keeps size/z-order)."""
     if sys.platform != "win32" or not hwnd:
