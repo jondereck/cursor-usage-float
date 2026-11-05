@@ -259,6 +259,7 @@ class SettingsWindow(tk.Toplevel):
         for attr, label in (
             ("show_header", "Show header"),
             ("show_total", "Cursor Models"),
+            ("show_token_usage", "Tokens used"),
             ("show_other_models", "Other Models (API pool)"),
             ("show_pace", "Today's pace"),
             ("show_grok_bot", "Grok Bot (Cursor)"),
@@ -276,6 +277,7 @@ class SettingsWindow(tk.Toplevel):
         for attr, label in (
             ("always_on_top", "Always on top"),
             ("click_through", "Click-through"),
+            ("notify_grok_relogin", "Notify when Grok needs re-login"),
         ):
             self._add_switch(behavior, label, attr)
 

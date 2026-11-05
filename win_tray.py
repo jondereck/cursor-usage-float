@@ -10,6 +10,21 @@ from pathlib import Path
 NIF_MESSAGE = 0x00000001
 NIF_ICON = 0x00000002
 NIF_TIP = 0x00000004
+NIF_INFO = 0x00000010
+
+NIIF_NONE = 0x00000000
+NIIF_INFO = 0x00000001
+NIIF_WARNING = 0x00000002
+NIIF_ERROR = 0x00000003
+
+# Tray callback codes delivered in lParam for balloon notifications.
+NIN_BALLOONSHOW = 0x0402
+NIN_BALLOONHIDE = 0x0403
+NIN_BALLOONTIMEOUT = 0x0404
+NIN_BALLOONUSERCLICK = 0x0405
+
+BALLOON_TITLE_CHARS = 63  # szInfoTitle is WCHAR[64]
+BALLOON_TEXT_CHARS = 255  # szInfo is WCHAR[256]
 
 NIM_ADD = 0x00000000
 NIM_MODIFY = 0x00000001
@@ -46,6 +61,18 @@ QUIT_ARM_DELAY_MS = 400
 
 def tray_notify_flags() -> int:
     return NIF_MESSAGE | NIF_ICON | NIF_TIP
+
+
+def tray_info_flags() -> int:
+    """Flags for a balloon update: keep icon/tip, add the info block."""
+    return tray_notify_flags() | NIF_INFO
+
+
+def clamp_balloon_text(title: str, message: str) -> tuple[str, str]:
+    """Trim to the Win32 NOTIFYICONDATA field sizes (no truncation crash)."""
+    clean_title = (title or "").strip()[:BALLOON_TITLE_CHARS]
+    clean_message = (message or "").strip()[:BALLOON_TEXT_CHARS]
+    return clean_title, clean_message
 
 
 def checked_menu_flags(checked: bool) -> int:
@@ -118,6 +145,7 @@ class TrayIcon:
         self._quit_armed = False
         self._menu_open = False
         self._pending: deque[int] = deque()
+        self._balloon_click: Callable[[], None] | None = None
 
         if sys.platform == "win32":
             self._create_message_window()
@@ -286,9 +314,14 @@ class TrayIcon:
                 return
         self._hicon = int(user32.LoadIconW(None, ctypes.cast(IDI_APPLICATION, wintypes.LPCWSTR)))
 
-    def _notify(self, action: int) -> None:
+    def _notify(
+        self,
+        action: int,
+        *,
+        balloon: tuple[str, str] | None = None,
+    ) -> bool:
         if not self._hwnd:
-            return
+            return False
         import ctypes
         from ctypes import wintypes
 
@@ -301,6 +334,12 @@ class TrayIcon:
                 ("uCallbackMessage", wintypes.UINT),
                 ("hIcon", wintypes.HICON),
                 ("szTip", wintypes.WCHAR * 128),
+                ("dwState", wintypes.DWORD),
+                ("dwStateMask", wintypes.DWORD),
+                ("szInfo", wintypes.WCHAR * 256),
+                ("uTimeout", wintypes.UINT),
+                ("szInfoTitle", wintypes.WCHAR * 64),
+                ("dwInfoFlags", wintypes.DWORD),
             ]
 
         nid = NOTIFYICONDATAW()
@@ -312,8 +351,33 @@ class TrayIcon:
         nid.hIcon = self._hicon
         tip = (self._tip or "Cursor Usage")[:127]
         nid.szTip = tip
+        if balloon is not None:
+            title, message = clamp_balloon_text(*balloon)
+            nid.uFlags = tray_info_flags()
+            nid.szInfoTitle = title
+            nid.szInfo = message
+            nid.uTimeout = 10_000
+            nid.dwInfoFlags = NIIF_WARNING
         self._nid = nid
-        ctypes.windll.shell32.Shell_NotifyIconW(action, ctypes.byref(nid))
+        return bool(
+            ctypes.windll.shell32.Shell_NotifyIconW(action, ctypes.byref(nid))
+        )
+
+    def notify(
+        self,
+        title: str,
+        message: str,
+        *,
+        on_click: Callable[[], None] | None = None,
+    ) -> bool:
+        """Show a tray balloon; ``on_click`` runs when the user clicks it."""
+        if sys.platform != "win32" or not self._hwnd or not self._visible:
+            return False
+        self._balloon_click = on_click
+        if not self._notify(NIM_MODIFY, balloon=(title, message)):
+            self._balloon_click = None
+            return False
+        return True
 
     def _start_pump(self) -> None:
         if self._pump_job is not None:
@@ -339,6 +403,17 @@ class TrayIcon:
                 self._handle_show()
             elif mouse == WM_RBUTTONUP:
                 self._handle_right_click()
+            elif mouse == NIN_BALLOONUSERCLICK:
+                self._handle_balloon_click()
+
+    def _handle_balloon_click(self) -> None:
+        callback = getattr(self, "_balloon_click", None)
+        self._balloon_click = None
+        if callback is not None:
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 - a bad callback must not kill the pump
+                pass
 
     def _pump(self) -> None:
         if not self._visible or not self._hwnd:

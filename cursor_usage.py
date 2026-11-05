@@ -17,6 +17,8 @@ GRANT_PATH = "/aiserver.v1.DashboardService/GetUsageLimitStatusAndActiveGrants"
 GRANT_URL = f"{API_ORIGIN}{GRANT_PATH}"
 GROK_BOT_PATH = "/aiserver.v1.DashboardService/GetSandUsageStatus"
 GROK_BOT_URL = f"{API_ORIGIN}{GROK_BOT_PATH}"
+TOKEN_USAGE_PATH = "/aiserver.v1.DashboardService/GetAggregatedUsageEvents"
+TOKEN_USAGE_URL = f"{API_ORIGIN}{TOKEN_USAGE_PATH}"
 
 # api2.cursor.sh is intermittently slow (20s read timeouts produced spurious
 # "Network error" rows); 40s is the shortest timeout that reliably completed.
@@ -51,6 +53,33 @@ class PlanUsage:
         if self.total_spend_cents is None or not self.limit_cents:
             return None
         return f"{_fmt_usd(self.total_spend_cents)} of {_fmt_usd(self.limit_cents)} used"
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    """Tokens Cursor billed this period (from GetAggregatedUsageEvents).
+
+    Cursor's dashboard endpoint only counts token-based model calls; Composer
+    requests are tracked as requests instead, so this can be far below the
+    plan percentage.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cost_cents: float = 0.0
+    start_date: str | None = None
+
+    @property
+    def total_tokens(self) -> int:
+        """Input + output + cache reads (what was actually processed)."""
+        return max(0, self.input_tokens) + max(0, self.output_tokens) + max(
+            0, self.cache_read_tokens
+        )
+
+    @property
+    def is_eligible(self) -> bool:
+        return self.total_tokens > 0
 
 
 @dataclass(frozen=True)
@@ -318,7 +347,12 @@ def parse_grok_bot_usage(payload: dict[str, Any]) -> GrokBotUsage:
     )
 
 
-def _post_dashboard_json(url: str, access_token: str) -> dict[str, Any]:
+def _post_dashboard_json(
+    url: str,
+    access_token: str,
+    *,
+    timeout: int = HTTP_TIMEOUT_S,
+) -> dict[str, Any]:
     """POST empty JSON body to a Cursor DashboardService Connect-RPC endpoint."""
     request = urllib.request.Request(
         url,
@@ -333,7 +367,7 @@ def _post_dashboard_json(url: str, access_token: str) -> dict[str, Any]:
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_S) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         detail = ""
@@ -397,3 +431,70 @@ def fetch_grok_bot_usage(token: str | None = None) -> GrokBotUsage:
     """
     access_token = token if token is not None else get_access_token()
     return parse_grok_bot_usage(_post_dashboard_json(GROK_BOT_URL, access_token))
+
+
+def _as_token_int(data: dict[str, Any], *keys: str) -> int:
+    """Token counters arrive as quoted decimal strings ("191242")."""
+    for key in keys:
+        if key in data and data[key] is not None:
+            try:
+                return max(0, int(float(data[key])))
+            except (TypeError, ValueError):
+                continue
+    return 0
+
+
+def parse_aggregated_token_usage(payload: dict[str, Any]) -> TokenUsage:
+    """Parse GetAggregatedUsageEvents JSON into TokenUsage."""
+    if not isinstance(payload, dict):
+        raise UsageError("Unexpected token usage API response shape.")
+
+    totals = payload
+    if not any(
+        key in payload
+        for key in ("totalInputTokens", "totalOutputTokens", "totalCacheReadTokens")
+    ):
+        # Older/newer shapes may only include the per-model aggregation list.
+        aggregations = payload.get("aggregations")
+        if isinstance(aggregations, list) and aggregations:
+            merged: dict[str, Any] = {
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "cacheReadTokens": 0,
+            }
+            for entry in aggregations:
+                if not isinstance(entry, dict):
+                    continue
+                for src, dst in (
+                    ("inputTokens", "inputTokens"),
+                    ("outputTokens", "outputTokens"),
+                    ("cacheReadTokens", "cacheReadTokens"),
+                ):
+                    merged[dst] += _as_token_int(entry, src)
+            totals = merged
+        else:
+            raise UsageError("Token usage response missing token totals.")
+
+    start_date = payload.get("startDate")
+    return TokenUsage(
+        input_tokens=_as_token_int(totals, "totalInputTokens", "inputTokens"),
+        output_tokens=_as_token_int(totals, "totalOutputTokens", "outputTokens"),
+        cache_read_tokens=_as_token_int(
+            totals, "totalCacheReadTokens", "cacheReadTokens"
+        ),
+        cost_cents=_as_float(totals, "totalCostCents", "costCents"),
+        start_date=str(start_date) if start_date is not None else None,
+    )
+
+
+def fetch_token_usage(token: str | None = None) -> TokenUsage:
+    """
+    POST GetAggregatedUsageEvents using the local Cursor bearer token.
+
+    Cursor defaults the range to the current month, so this is a month-to-date
+    cumulative total. Token is used in-memory only and sent solely to
+    api2.cursor.sh.
+    """
+    access_token = token if token is not None else get_access_token()
+    payload = _post_dashboard_json(TOKEN_USAGE_URL, access_token, timeout=20)
+    return parse_aggregated_token_usage(payload)

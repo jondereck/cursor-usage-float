@@ -31,6 +31,42 @@ def test_tray_notify_flags_include_icon_tip_and_callback() -> None:
     assert flags & NIF_TIP
 
 
+def test_tray_info_flags_add_balloon_support() -> None:
+    from win_tray import NIF_INFO, tray_info_flags
+
+    flags = tray_info_flags()
+    assert flags & NIF_INFO
+    assert flags & NIF_TIP
+
+
+def test_clamp_balloon_text_matches_win32_field_sizes() -> None:
+    from win_tray import BALLOON_TEXT_CHARS, BALLOON_TITLE_CHARS, clamp_balloon_text
+
+    title, message = clamp_balloon_text("  Grok needs re-login  ", "x" * 400)
+    assert title == "Grok needs re-login"
+    assert len(message) == BALLOON_TEXT_CHARS
+    long_title, _ = clamp_balloon_text("t" * 200, "m")
+    assert len(long_title) == BALLOON_TITLE_CHARS
+
+
+def test_balloon_click_runs_callback_once() -> None:
+    from collections import deque
+
+    from win_tray import NIN_BALLOONUSERCLICK
+
+    tray = TrayIcon.__new__(TrayIcon)
+    calls: list[int] = []
+    tray._balloon_click = lambda: calls.append(1)
+    tray._pending = deque([NIN_BALLOONUSERCLICK])
+
+    tray._drain_pending()
+
+    assert calls == [1]
+    assert tray._balloon_click is None
+    tray._drain_pending()
+    assert calls == [1]
+
+
 def test_tray_menu_command_ids_are_distinct() -> None:
     ids = {
         ID_CURSOR_USAGE,

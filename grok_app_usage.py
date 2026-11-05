@@ -239,11 +239,11 @@ def _fetch_grok_settings_tiers(access: str) -> tuple[str | None, str | None]:
     return disp_text, id_text
 
 
-def fetch_grok_app_usage(token: str | None = None, auth_path: str | None = None) -> GrokAppUsage:
-    path = resolve_grok_auth_path(auth_path or "")
-    access = token if token is not None else read_grok_access_token(path)
-    if grok_access_token_expired(access):
-        raise GrokAppError(format_grok_app_error("Grok login expired"))
+class _Unauthorized(Exception):
+    """Billing endpoint returned 401 for the current access token."""
+
+
+def _request_billing(access: str) -> dict[str, Any]:
     request = urllib.request.Request(
         BILLING_URL,
         headers={
@@ -259,7 +259,7 @@ def fetch_grok_app_usage(token: str | None = None, auth_path: str | None = None)
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
-            raise GrokAppError(format_grok_app_error("Grok billing HTTP 401")) from exc
+            raise _Unauthorized() from exc
         raise GrokAppError(f"Grok billing HTTP {exc.code}") from exc
     except urllib.error.URLError as exc:
         raise GrokAppError(f"Grok billing unreachable: {exc.reason}") from exc
@@ -269,6 +269,47 @@ def fetch_grok_app_usage(token: str | None = None, auth_path: str | None = None)
         raise GrokAppError("Grok billing returned invalid JSON.") from exc
     if not isinstance(payload, dict):
         raise GrokAppError("Unexpected Grok billing response.")
+    return payload
+
+
+def _fresh_access_token(path: Path, current: str, *, force: bool = False) -> str:
+    """Silently refresh the grok CLI token and return the newest access token.
+
+    Raises ``GrokAppError`` only when a refresh is actually required and fails.
+    """
+    from grok_auth_refresh import grok_auth_needs_refresh, refresh_grok_auth
+
+    if not force and not grok_auth_needs_refresh(current):
+        return current
+    result = refresh_grok_auth(path)
+    if result.refreshed:
+        try:
+            return read_grok_access_token(path)
+        except GrokAppError:
+            return current
+    if result.needs_login:
+        raise GrokAppError(format_grok_app_error("Grok login expired"))
+    raise GrokAppError(result.error or "Grok token refresh failed.")
+
+
+def fetch_grok_app_usage(token: str | None = None, auth_path: str | None = None) -> GrokAppUsage:
+    path = resolve_grok_auth_path(auth_path or "")
+    access = token if token is not None else read_grok_access_token(path)
+    if token is None:
+        access = _fresh_access_token(path, access)
+    elif grok_access_token_expired(access):
+        raise GrokAppError(format_grok_app_error("Grok login expired"))
+    try:
+        payload = _request_billing(access)
+    except _Unauthorized:
+        if token is not None:
+            raise GrokAppError(format_grok_app_error("Grok billing HTTP 401")) from None
+        # Token looked valid but the server disagreed — refresh once and retry.
+        access = _fresh_access_token(path, access, force=True)
+        try:
+            payload = _request_billing(access)
+        except _Unauthorized:
+            raise GrokAppError(format_grok_app_error("Grok billing HTTP 401")) from None
     usage = parse_grok_billing(payload)
     email, _ = _metadata_from_auth_path(path)
     if not email:

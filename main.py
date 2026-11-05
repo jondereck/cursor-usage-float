@@ -30,10 +30,12 @@ from login_watch import file_stamp, live_cursor_fingerprint
 from cursor_usage import (
     GrokBotUsage,
     PlanUsage,
+    TokenUsage,
     UsageError,
     budget_from_plan,
     fetch_current_period_usage,
     fetch_grok_bot_usage,
+    fetch_token_usage,
 )
 from antigravity_usage import AntigravityUsage, fetch_antigravity_usage
 from codex_usage import CodexUsage, fetch_codex_usage
@@ -103,6 +105,7 @@ from theme import (
     pill_border_for_state,
     pill_chrome,
 )
+from spin_button import SpinButton
 from win_app_icon import apply_tk_icon, set_app_user_model_id
 from win_clickthrough import (
     TRANSPARENT_KEY,
@@ -130,6 +133,9 @@ from window_state import (
 
 POLL_MS = SLOW_POLL_MS  # slowest cadence (also drives the stale badge)
 STALE_MS = 2 * POLL_MS
+# GetAggregatedUsageEvents is a heavier query; a couple of minutes of lag is
+# fine for a cumulative token counter.
+TOKEN_USAGE_TTL_S = 120.0
 WINDOW_WIDTH = 300
 PILL_WIDTH = 110
 PILL_WIDTH_PACE = 168
@@ -433,6 +439,8 @@ class UsageFloater(tk.Tk):
         self._connection_ok: bool | None = None
         self._last_success_at: datetime | None = None
         self._last_usage: PlanUsage | None = None
+        self._last_token_usage: TokenUsage | None = None
+        self._token_usage_at = 0.0
         self._last_usage_secondary: PlanUsage | None = None
         self._secondary_cursor_error: str | None = None
         self._last_grok_bot: GrokBotUsage | None = None
@@ -442,6 +450,8 @@ class UsageFloater(tk.Tk):
         self._cursor_fp: str | None = None
         self._cached_cursor_token: str | None = None
         self._grok_auth_stamp: str | None = None
+        self._grok_seen_ok = False
+        self._grok_relogin_notified = False
         cached_antigravity = _load_antigravity_cache()
         self._last_antigravity: AntigravityUsage | None = (
             cached_antigravity[0] if cached_antigravity else None
@@ -567,7 +577,7 @@ class UsageFloater(tk.Tk):
         title.bind("<B1-Motion>", self._on_drag)
         title.bind("<ButtonRelease-1>", self._end_drag)
 
-        self.refresh_btn = self._header_btn("↻", self.refresh_async)
+        self.refresh_btn = SpinButton(self.header, self.refresh_async)
         self._header_btn("✕", self.destroy).pack(side="right")
         self.refresh_btn.pack(side="right", padx=(0, 2))
         self._header_btn(GEAR_ICON, self._open_settings, icon_font=True).pack(
@@ -2382,15 +2392,9 @@ class UsageFloater(tk.Tk):
                 return
             self._pulse_on = not self._pulse_on
             self._paint_status()
-            angle = 0 if not hasattr(self, "_refresh_spin") else self._refresh_spin
-            self._refresh_spin = (angle + 45) % 360
-            # Subtle refresh glyph cue via fg flash
-            try:
-                self.refresh_btn.configure(fg=TEXT if self._pulse_on else MUTED)
-            except tk.TclError:
-                pass
             self._pulse_job = self.after(180, tick)
 
+        self.refresh_btn.start()
         tick()
 
     def _stop_pulse(self) -> None:
@@ -2401,10 +2405,7 @@ class UsageFloater(tk.Tk):
                 pass
             self._pulse_job = None
         self._pulse_on = False
-        try:
-            self.refresh_btn.configure(fg=MUTED, bg=CARD)
-        except tk.TclError:
-            pass
+        self.refresh_btn.stop()
 
     def refresh_async(self) -> None:
         if self._refreshing:
@@ -2478,6 +2479,24 @@ class UsageFloater(tk.Tk):
             except Exception as exc:  # noqa: BLE001
                 cursor_error = f"Unexpected error: {exc}"
 
+            # Cumulative period tokens; cached briefly so a 15s poll doesn't
+            # hammer the heavier aggregation endpoint. Failures keep the last
+            # good value (None on first failure → row just omits the count).
+            token_usage: TokenUsage | None = self._last_token_usage
+            if live_token and usage is not None:
+                now_mono = time.monotonic()
+                if (
+                    token_usage is None
+                    or now_mono - self._token_usage_at >= TOKEN_USAGE_TTL_S
+                ):
+                    try:
+                        token_usage = fetch_token_usage(token=live_token)
+                        self._token_usage_at = now_mono
+                    except (AuthError, UsageError):
+                        pass
+                    except Exception:  # noqa: BLE001
+                        pass
+
             if self.settings.show_dual_cursor:
                 token_path = (self.settings.secondary_cursor_token_file or "").strip()
                 if token_path:
@@ -2512,7 +2531,6 @@ class UsageFloater(tk.Tk):
 
             if self.settings.show_grok_premium:
                 auth_path = resolve_grok_auth_path(self.settings.grok_app_token_file)
-                self._grok_auth_stamp = file_stamp(auth_path)
                 custom_grok = (self.settings.grok_app_token_file or "").strip()
                 if grok_auth_ready(auth_path):
                     try:
@@ -2536,6 +2554,11 @@ class UsageFloater(tk.Tk):
                         grok_app_error = str(exc)
                     except Exception as exc:  # noqa: BLE001
                         grok_app_error = str(exc)
+                # Record the stamp *after* the fetch: a silent token refresh
+                # rewrites auth.json and would otherwise trigger a poll loop.
+                self._grok_auth_stamp = file_stamp(
+                    resolve_grok_auth_path(self.settings.grok_app_token_file)
+                )
 
             try:
                 anti = fetch_antigravity_usage()
@@ -2558,7 +2581,7 @@ class UsageFloater(tk.Tk):
             if usage is not None:
                 self.after(
                     0,
-                    lambda u=usage, u2=usage_secondary, u2e=usage_secondary_error, pl=primary_label, sl=secondary_label, g=grok, g_ok=grok_ok, ga=grok_app, gae=grok_app_error, a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok, o=opencode, o_ok=opencode_ok: self._apply_usage(
+                    lambda u=usage, u2=usage_secondary, u2e=usage_secondary_error, pl=primary_label, sl=secondary_label, g=grok, g_ok=grok_ok, ga=grok_app, gae=grok_app_error, a=anti, a_ok=anti_ok, ae=anti_error, c=codex, c_ok=codex_ok, o=opencode, o_ok=opencode_ok, tu=token_usage: self._apply_usage(
                         u,
                         usage_secondary=u2,
                         usage_secondary_error=u2e,
@@ -2575,6 +2598,7 @@ class UsageFloater(tk.Tk):
                         codex_updated=c_ok,
                         opencode=o,
                         opencode_updated=o_ok,
+                        token_usage=tu,
                     ),
                 )
             else:
@@ -2673,10 +2697,12 @@ class UsageFloater(tk.Tk):
         codex_updated: bool = True,
         opencode: OpenCodeUsage | None = None,
         opencode_updated: bool = True,
+        token_usage: TokenUsage | None = None,
     ) -> None:
         if self._last_usage is not None and _usage_moved(self._last_usage, usage):
             self._last_usage_change_at = time.monotonic()
         self._last_usage = usage
+        self._last_token_usage = token_usage
         if grok_updated:
             self._last_grok_bot = grok
         self._record_antigravity(
@@ -2697,6 +2723,8 @@ class UsageFloater(tk.Tk):
                 getattr(self, "_cursor_account", None),
                 show_email=self.settings.auto_label_from_email,
                 show_reset=self.settings.show_reset_countdown,
+                token_usage=token_usage,
+                show_tokens=self.settings.show_token_usage,
             )
         )
         if primary_label:
@@ -2740,9 +2768,16 @@ class UsageFloater(tk.Tk):
             return
         self._last_grok_app = usage
         self._grok_app_error = error
+        ok = usage is not None and usage.is_eligible
+        if ok:
+            self._grok_seen_ok = True
+            self._grok_relogin_notified = False
+        elif self.settings.show_grok_premium:
+            # Fires even in pill mode so an expired login is never silent.
+            self._maybe_notify_grok_relogin(error)
         if not self._grok_premium_should_show():
             return
-        if usage is not None and usage.is_eligible:
+        if ok:
             self.grok_premium_row.set_title("Grok")
             self.grok_premium_row.set_percent(usage.usage_percent)
             plan = format_grok_plan_label(usage.plan_tier, usage.plan_tier_id)
@@ -2769,6 +2804,37 @@ class UsageFloater(tk.Tk):
         )
         self.grok_premium_row.set_subtext(err)
         self._show_grok_login_button(grok_error_needs_login_action(error or err))
+
+    def _maybe_notify_grok_relogin(self, error: str | None) -> None:
+        """Tray balloon once per expiry episode (click → open grok login)."""
+        if self._grok_relogin_notified:
+            return
+        if not bool(getattr(self.settings, "notify_grok_relogin", True)):
+            return
+        if self._tray is None or not self._tray.visible:
+            return
+        if not grok_error_needs_login_action(error):
+            return
+        if not (self._grok_seen_ok or self._grok_auth_configured()):
+            # First run / CLI never set up — the row already explains it.
+            return
+        shown = self._tray.notify(
+            "Grok needs re-login",
+            "Grok usage stopped updating. Click to open grok login.",
+            on_click=self._grok_relogin_from_notification,
+        )
+        if shown:
+            self._grok_relogin_notified = True
+
+    def _grok_auth_configured(self) -> bool:
+        try:
+            return resolve_grok_auth_path(self.settings.grok_app_token_file).is_file()
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _grok_relogin_from_notification(self) -> None:
+        self._on_tray_show()
+        self._launch_grok_login()
 
     def _show_grok_login_button(self, visible: bool) -> None:
         if not hasattr(self, "grok_login_btn_frame"):
@@ -3035,8 +3101,10 @@ def _cursor_subtext(
     *,
     show_email: bool = True,
     show_reset: bool = True,
+    token_usage: TokenUsage | None = None,
+    show_tokens: bool = True,
 ) -> str:
-    """Row caption: plan · email · pool note · reset."""
+    """Row caption: plan · email · pool note · tokens · reset."""
     from cursor_identity import CursorAccountInfo
 
     parts: list[str] = []
@@ -3047,7 +3115,9 @@ def _cursor_subtext(
     if usage.source == "grants":
         parts.append(usage.spend_label or "Included usage this period")
     else:
-        parts.append("Includes Composer and Cursor Grok models")
+        parts.append("Includes Composer + Grok")
+    if show_tokens and token_usage is not None and token_usage.is_eligible:
+        parts.append(f"{format_token_count(token_usage.total_tokens)} tokens")
     if show_reset and usage.billing_cycle_end:
         reset_hint = format_resets_in_label(usage.billing_cycle_end)
         if reset_hint:

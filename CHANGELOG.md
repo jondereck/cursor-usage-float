@@ -2,6 +2,27 @@
 
 Bump `version.json` when you add a section (newest first).
 
+## 1.2.3 — 2026-11-04
+
+### Added
+- **Tokens used** in the Cursor Models subtitle (input + output + cache reads,
+  cumulative for the month). Toggle in **Settings → Appearance**.
+  Cursor only counts token-based calls here, so Composer requests are not included.
+
+## 1.2.2 — 2026-11-04
+
+### Fixed
+- **Grok row no longer "expires" every few hours.** The stored `refresh_token` in
+  `~/.grok/auth.json` is now used to refresh the access token silently (and once more
+  on a 401), so the percentage keeps updating without a manual refresh or `grok login`.
+- Grok auth file writes are atomic and skipped when the grok CLI already rotated the token.
+
+### Added
+- Tray notification **Grok needs re-login** when a refresh genuinely fails (revoked
+  login). Clicking it opens the floater and starts `grok login`. Toggle in
+  **Settings → Behavior**.
+- The header refresh button now **spins** while a refresh is running.
+
 ## 1.2.1 — 2026-11-02
 
 ### Added

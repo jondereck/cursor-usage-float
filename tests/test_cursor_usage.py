@@ -7,8 +7,10 @@ import pytest
 from cursor_usage import (
     GrokBotUsage,
     PlanUsage,
+    TokenUsage,
     UsageError,
     budget_from_plan,
+    parse_aggregated_token_usage,
     parse_grok_bot_usage,
     parse_plan_usage,
 )
@@ -120,3 +122,99 @@ def test_pill_grok_metric_uses_grok_bot_percent() -> None:
     )
     assert resolve_minimized_percent(usage, "grok", grok=grok) == 42.0
     assert resolve_minimized_percent(usage, "grok", grok=None) == 10.6
+
+
+def test_parse_aggregated_token_usage_sums_quoted_totals() -> None:
+    usage = parse_aggregated_token_usage(
+        {
+            "totalInputTokens": "191242",
+            "totalOutputTokens": "9251",
+            "totalCacheReadTokens": "1505024",
+            "totalCostCents": 119.0502,
+            "startDate": "1793491200000",
+        }
+    )
+    assert usage.input_tokens == 191242
+    assert usage.output_tokens == 9251
+    assert usage.cache_read_tokens == 1505024
+    assert usage.total_tokens == 191242 + 9251 + 1505024
+    assert usage.cost_cents == pytest.approx(119.0502)
+    assert usage.start_date == "1793491200000"
+    assert usage.is_eligible is True
+
+
+def test_parse_aggregated_token_usage_falls_back_to_aggregations() -> None:
+    usage = parse_aggregated_token_usage(
+        {
+            "aggregations": [
+                {
+                    "inputTokens": "100",
+                    "outputTokens": "10",
+                    "cacheReadTokens": "1000",
+                },
+                {
+                    "inputTokens": "5",
+                    "outputTokens": "2",
+                    "cacheReadTokens": "50",
+                },
+            ]
+        }
+    )
+    assert usage.input_tokens == 105
+    assert usage.output_tokens == 12
+    assert usage.cache_read_tokens == 1050
+    assert usage.total_tokens == 1167
+
+
+def test_parse_aggregated_token_usage_empty_is_not_eligible() -> None:
+    usage = parse_aggregated_token_usage(
+        {"totalInputTokens": "0", "totalOutputTokens": "0", "totalCacheReadTokens": "0"}
+    )
+    assert usage.total_tokens == 0
+    assert usage.is_eligible is False
+
+
+def test_parse_aggregated_token_usage_missing_totals_raises() -> None:
+    with pytest.raises(UsageError):
+        parse_aggregated_token_usage({"aggregations": []})
+
+
+def test_token_usage_defaults_are_zero() -> None:
+    usage = TokenUsage()
+    assert usage.total_tokens == 0
+    assert usage.is_eligible is False
+
+
+def test_cursor_subtext_appends_tokens_before_reset() -> None:
+    from main import _cursor_subtext
+
+    usage = PlanUsage(
+        total_percent=62.0,
+        auto_percent=62.0,
+        api_percent=0.0,
+        billing_cycle_end="1794149651921",
+    )
+    tokens = TokenUsage(
+        input_tokens=191242,
+        output_tokens=9251,
+        cache_read_tokens=1505024,
+    )
+    text = _cursor_subtext(
+        usage,
+        None,
+        show_email=False,
+        token_usage=tokens,
+    )
+    assert "1.7M tokens" in text
+    assert text.index("1.7M tokens") < text.index("Resets in")
+
+
+def test_cursor_subtext_can_hide_tokens() -> None:
+    from main import _cursor_subtext
+
+    usage = PlanUsage(total_percent=1.0, auto_percent=1.0, api_percent=0.0)
+    tokens = TokenUsage(input_tokens=1000)
+    text = _cursor_subtext(usage, None, show_email=False, token_usage=tokens, show_tokens=False)
+    assert "tokens" not in text
+
+

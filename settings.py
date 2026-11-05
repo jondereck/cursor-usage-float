@@ -43,6 +43,7 @@ class AppSettings:
     show_reset_countdown: bool = True
     show_stale_badge: bool = True
     show_total: bool = True
+    show_token_usage: bool = True
     show_other_models: bool = False
     show_pace: bool = True
     show_grok_bot: bool = True
@@ -69,6 +70,8 @@ class AppSettings:
     remember_previous_cursor_login: bool = True
     show_grok_premium: bool = True
     grok_app_token_file: str = ""
+    # Tray balloon when the Grok login expires (click opens grok login).
+    notify_grok_relogin: bool = True
 
 
 def default_settings_path() -> Path:
