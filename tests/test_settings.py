@@ -96,6 +96,7 @@ def test_unknown_keys_ignored(tmp_path: Path) -> None:
     assert loaded.density == "minimal"
     assert loaded.minimized_metric == "api"
     assert loaded.always_on_top is True
+    assert loaded.hide_on_fullscreen is True
     assert loaded.start_with_windows is False
 
 

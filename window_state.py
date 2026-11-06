@@ -82,6 +82,8 @@ def position_after_resize(
     new_width: int,
     new_height: int,
     bounds: tuple[int, int, int, int],
+    anchor_bottom: bool = False,
+    monitor_bottom: int | None = None,
 ) -> tuple[int, int]:
     """Position a resized window so it stays inside the work area.
 
@@ -89,6 +91,14 @@ def position_after_resize(
     when the new size fits; otherwise the window grows away from the nearest
     edge (a pill near the bottom screen edge expands upward, one near the
     right edge expands leftward) and is finally clamped on-screen.
+
+    With ``anchor_bottom``, the bottom edge of the old window is preserved
+    (pill above the taskbar opens upward without jumping). Vertical clamping
+    then uses ``monitor_bottom`` when given so a pill sitting on the taskbar
+    is not pulled entirely into the work area.
+
+    Pass the **full monitor** as ``bounds`` (not the work area). Clamping to
+    the work area pulls a taskbar-docked pill up on every resize.
     """
     left, top, right, bottom = (int(v) for v in bounds)
     old_w = max(1, int(old_width))
@@ -99,10 +109,13 @@ def position_after_resize(
     py = int(y)
     if px + new_w > right:
         px = px + old_w - new_w
-    if py + new_h > bottom:
+    if anchor_bottom:
+        py = py + old_h - new_h
+    elif py + new_h > bottom:
         py = py + old_h - new_h
     max_x = max(left, right - new_w)
-    max_y = max(top, bottom - new_h)
+    vertical_limit = int(monitor_bottom) if monitor_bottom is not None else bottom
+    max_y = max(top, vertical_limit - new_h)
     return max(left, min(px, max_x)), max(top, min(py, max_y))
 
 

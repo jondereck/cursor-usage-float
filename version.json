@@ -1,5 +1,5 @@
 {
-  "version": "1.2.4",
-  "date": "2026-11-05",
-  "title": "Panel flips up when the pill is near the bottom edge"
+  "version": "1.2.5",
+  "date": "2026-11-06",
+  "title": "Taskbar-docked pill stays put; hide on true fullscreen"
 }

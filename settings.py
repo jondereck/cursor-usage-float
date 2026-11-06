@@ -38,6 +38,7 @@ LOCAL_ONLY_SETTINGS = (
 class AppSettings:
     density: str = "full"  # full | compact | minimal
     always_on_top: bool = True
+    hide_on_fullscreen: bool = True
     click_through: bool = False
     show_header: bool = True
     show_reset_countdown: bool = True

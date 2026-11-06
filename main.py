@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 import threading
 import time
 import tkinter as tk
@@ -110,8 +111,10 @@ from win_app_icon import apply_tk_icon, set_app_user_model_id
 from win_clickthrough import (
     TRANSPARENT_KEY,
     clear_window_region,
+    get_monitor_bounds,
     get_monitor_work_area,
     get_window_pos,
+    get_window_rect,
     set_click_through,
     set_color_key,
     set_layered_attrs,
@@ -119,6 +122,7 @@ from win_clickthrough import (
     set_window_pos,
     toplevel_hwnd,
 )
+from win_fullscreen import is_foreground_app_fullscreen
 from win_taskbar import apply_taskbar_button
 from win_tray import TrayIcon
 from win_hotkey import GlobalHotkey
@@ -480,6 +484,9 @@ class UsageFloater(tk.Tk):
         self._placed = False
         # Where the pill was before expanding, so collapsing can return it.
         self._pill_anchor: tuple[int, int] | None = None
+        self._pin_window_bottom = False
+        self._hidden_for_fullscreen = False
+        self._our_process_id = os.getpid()
         self._animating = False
         self._anim_job: str | None = None
         self._pulse_job: str | None = None
@@ -524,6 +531,7 @@ class UsageFloater(tk.Tk):
             self.after(150, self._tray.show)
         self.after(200, self.refresh_async)
         self.after(POLL_TICK_MS, self._poll_tick)
+        self.after(400, self._fullscreen_tick)
         self.after(30_000, self._schedule_stale_check)
 
     def _build_ui(self) -> None:
@@ -1022,25 +1030,37 @@ class UsageFloater(tk.Tk):
         if not animate or was_pill == want_pill:
             self._cancel_animation()
             self._set_chrome(want_pill)
-            # Keep top-left fixed so expand/collapse doesn't jump.
+            if was_pill and not want_pill:
+                self._pin_window_bottom = True
+            elif want_pill:
+                self._pin_window_bottom = False
             self._resize_to_content(pin_right=False)
             self._was_pill = want_pill
             self._set_alpha(1.0)
             return
 
         # Alpha crossfade beats size-morph on Windows (no SetWindowRgn stutter).
-        pos = get_window_pos(toplevel_hwnd(self))
-        if pos is not None:
-            anchor_x, anchor_y = pos[0], pos[1]
+        hwnd = toplevel_hwnd(self)
+        rect = get_window_rect(hwnd) if hwnd else None
+        if rect is not None:
+            anchor_x, anchor_y = rect[0], rect[1]
+            old_w = max(rect[2] - rect[0], 1)
+            old_h = max(rect[3] - rect[1], 1)
         else:
-            anchor_x, anchor_y = int(self.winfo_x()), int(self.winfo_y())
-        old_w = max(int(self.winfo_width()), 1)
-        old_h = max(int(self.winfo_height()), 1)
+            pos = get_window_pos(hwnd)
+            if pos is not None:
+                anchor_x, anchor_y = pos[0], pos[1]
+            else:
+                anchor_x, anchor_y = int(self.winfo_x()), int(self.winfo_y())
+            old_w = max(int(self.winfo_width()), 1)
+            old_h = max(int(self.winfo_height()), 1)
         if was_pill and not want_pill:
             # Remember where the pill was so collapsing can put it back.
             self._pill_anchor = (anchor_x, anchor_y)
+            self._pin_window_bottom = True
         elif want_pill and not was_pill and self._pill_anchor is not None:
             anchor_x, anchor_y = self._pill_anchor
+            self._pin_window_bottom = False
         self._was_pill = want_pill
         self._animating = True
 
@@ -1048,23 +1068,24 @@ class UsageFloater(tk.Tk):
             self._set_chrome(want_pill)
             self.update_idletasks()
             end_w, end_h = self._target_size()
-            self.geometry(f"{end_w}x{end_h}")
-            hwnd = toplevel_hwnd(self)
+            hwnd_now = toplevel_hwnd(self)
+            bounds = self._monitor_area()
             if want_pill and self._pill_anchor is not None:
                 # Back to the exact spot the pill was clicked from.
+                self._pin_window_bottom = False
                 new_x, new_y = position_after_resize(
-                    anchor_x,
-                    anchor_y,
+                    self._pill_anchor[0],
+                    self._pill_anchor[1],
                     old_width=end_w,
                     old_height=end_h,
                     new_width=end_w,
                     new_height=end_h,
-                    bounds=self._work_area(),
+                    bounds=bounds,
                 )
                 self._pill_anchor = None
             else:
-                # Flip away from screen edges: a pill near the bottom expands
-                # upward instead of opening off-screen behind the taskbar.
+                # Keep the pill's bottom edge (taskbar dock); grow upward.
+                self._pin_window_bottom = True
                 new_x, new_y = position_after_resize(
                     anchor_x,
                     anchor_y,
@@ -1072,9 +1093,12 @@ class UsageFloater(tk.Tk):
                     old_height=old_h,
                     new_width=end_w,
                     new_height=end_h,
-                    bounds=self._work_area(),
+                    bounds=bounds,
+                    anchor_bottom=True,
+                    monitor_bottom=bounds[3],
                 )
-            if not set_window_pos(hwnd, new_x, new_y):
+            self.geometry(f"{end_w}x{end_h}+{new_x}+{new_y}")
+            if not set_window_pos(hwnd_now, new_x, new_y):
                 self.geometry(f"{end_w}x{end_h}+{new_x}+{new_y}")
             self._apply_rounded_corners(end_w, end_h)
             self._paint_status()
@@ -2287,6 +2311,9 @@ class UsageFloater(tk.Tk):
         area = get_monitor_work_area(toplevel_hwnd(self))
         if area is not None:
             return area
+        return self._fallback_screen_rect()
+
+    def _fallback_screen_rect(self) -> tuple[int, int, int, int]:
         return (
             0,
             0,
@@ -2294,16 +2321,38 @@ class UsageFloater(tk.Tk):
             max(1, int(self.winfo_screenheight())),
         )
 
-    def _resize_to_content(self, *, pin_right: bool = False) -> None:
+    def _monitor_area(self) -> tuple[int, int, int, int]:
+        """Full monitor including the taskbar — used so a docked pill stays put."""
+        area = get_monitor_bounds(toplevel_hwnd(self))
+        if area is not None:
+            return area
+        return self._work_area()
+
+    def _monitor_bottom(self) -> int | None:
+        return int(self._monitor_area()[3])
+
+    def _resize_to_content(self, *, pin_right: bool = False, pin_bottom: bool | None = None) -> None:
+        if self._animating:
+            return
         width, height = self._target_size()
         hwnd = toplevel_hwnd(self)
-        pos = get_window_pos(hwnd)
-        cur_x = pos[0] if pos is not None else int(self.winfo_x())
-        cur_y = pos[1] if pos is not None else int(self.winfo_y())
-        cur_w = max(self.winfo_width(), 1)
-        cur_h = max(self.winfo_height(), 1)
+        rect = get_window_rect(hwnd) if hwnd else None
+        if rect is not None:
+            cur_x, cur_y = rect[0], rect[1]
+            cur_w = max(rect[2] - rect[0], 1)
+            cur_h = max(rect[3] - rect[1], 1)
+        else:
+            pos = get_window_pos(hwnd)
+            cur_x = pos[0] if pos is not None else int(self.winfo_x())
+            cur_y = pos[1] if pos is not None else int(self.winfo_y())
+            cur_w = max(self.winfo_width(), 1)
+            cur_h = max(self.winfo_height(), 1)
         if pin_right:
             cur_x = cur_x + cur_w - width
+        anchor_bottom = (
+            pin_bottom if pin_bottom is not None else bool(self._pin_window_bottom)
+        )
+        bounds = self._monitor_area()
         x, y = position_after_resize(
             cur_x,
             cur_y,
@@ -2311,9 +2360,11 @@ class UsageFloater(tk.Tk):
             old_height=cur_h,
             new_width=width,
             new_height=height,
-            bounds=self._work_area(),
+            bounds=bounds,
+            anchor_bottom=anchor_bottom,
+            monitor_bottom=bounds[3] if anchor_bottom else None,
         )
-        self.geometry(f"{width}x{height}")
+        self.geometry(f"{width}x{height}+{x}+{y}")
         if not set_window_pos(hwnd, x, y):
             self.geometry(f"{width}x{height}+{x}+{y}")
         self._apply_rounded_corners(width, height)
@@ -2403,6 +2454,7 @@ class UsageFloater(tk.Tk):
             # User chose a new spot for the expanded panel; don't snap the
             # eventual pill back to the old pre-expand location.
             self._pill_anchor = None
+            self._pin_window_bottom = False
 
     def _end_drag(self, event: tk.Event) -> None:
         self._persist_window_state()
@@ -2432,6 +2484,56 @@ class UsageFloater(tk.Tk):
         if login_changed or time.monotonic() - self._last_poll_at >= interval_s:
             self.refresh_async()
         self.after(POLL_TICK_MS, self._poll_tick)
+
+    def _fullscreen_tick(self) -> None:
+        try:
+            self._update_fullscreen_visibility()
+        except Exception:
+            pass
+        self.after(400, self._fullscreen_tick)
+
+    def _update_fullscreen_visibility(self) -> None:
+        """Withdraw while a video/browser app covers the monitor (YouTube, etc.)."""
+        if sys.platform != "win32":
+            return
+        if self._settings_open:
+            return
+        if not bool(self.settings.hide_on_fullscreen):
+            if self._hidden_for_fullscreen:
+                self._hidden_for_fullscreen = False
+                try:
+                    self.deiconify()
+                except tk.TclError:
+                    pass
+                try:
+                    self.attributes("-topmost", bool(self.settings.always_on_top))
+                except tk.TclError:
+                    pass
+            return
+        our_hwnd = toplevel_hwnd(self)
+        hide = is_foreground_app_fullscreen(
+            our_hwnd,
+            exclude_process_ids=frozenset({self._our_process_id}),
+        )
+        if hide and not self._hidden_for_fullscreen:
+            self._hidden_for_fullscreen = True
+            try:
+                self.withdraw()
+            except tk.TclError:
+                pass
+            return
+        if not hide and self._hidden_for_fullscreen:
+            self._hidden_for_fullscreen = False
+            try:
+                self.deiconify()
+            except tk.TclError:
+                pass
+            try:
+                self.attributes("-topmost", bool(self.settings.always_on_top))
+            except tk.TclError:
+                pass
+            if self._show_pill_mode():
+                self.after_idle(self._redraw_pill_face)
 
     def _schedule_stale_check(self) -> None:
         if not self._show_pill_mode():

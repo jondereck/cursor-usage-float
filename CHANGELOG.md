@@ -2,6 +2,16 @@
 
 Bump `version.json` when you add a section (newest first).
 
+## 1.2.5 — 2026-11-06
+
+### Fixed
+- **Pill on the taskbar no longer jumps up.** Position is clamped to the full
+  monitor (not the work area), and expand keeps the pill's bottom edge so the
+  panel grows upward in place.
+- **Hide on true fullscreen** (YouTube / Netflix / F11 / games). Checks every
+  400ms, including HTML5 fullscreen windows on the foreground app. Toggle in
+  **Settings → Behavior**.
+
 ## 1.2.4 — 2026-11-05
 
 ### Fixed

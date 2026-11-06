@@ -46,6 +46,14 @@ def toplevel_hwnd(widget: object) -> int:
 
 def get_window_pos(hwnd: int) -> tuple[int, int] | None:
     """Screen position via GetWindowRect (virtual-desktop aware)."""
+    rect = get_window_rect(hwnd)
+    if rect is None:
+        return None
+    return rect[0], rect[1]
+
+
+def get_window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+    """Return ``(left, top, right, bottom)`` via GetWindowRect."""
     if sys.platform != "win32" or not hwnd:
         return None
     try:
@@ -63,7 +71,48 @@ def get_window_pos(hwnd: int) -> tuple[int, int] | None:
         rect = RECT()
         if not ctypes.windll.user32.GetWindowRect(int(hwnd), ctypes.byref(rect)):
             return None
-        return int(rect.left), int(rect.top)
+        return int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
+    except Exception:
+        return None
+
+
+def get_monitor_bounds(hwnd: int) -> tuple[int, int, int, int] | None:
+    """Return ``(left, top, right, bottom)`` of the full monitor (includes taskbar)."""
+    if sys.platform != "win32" or not hwnd:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", wintypes.LONG),
+                ("top", wintypes.LONG),
+                ("right", wintypes.LONG),
+                ("bottom", wintypes.LONG),
+            ]
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("rcMonitor", RECT),
+                ("rcWork", RECT),
+                ("dwFlags", wintypes.DWORD),
+            ]
+
+        MONITOR_DEFAULTTONEAREST = 2
+        user32 = ctypes.windll.user32
+        monitor = user32.MonitorFromWindow(int(hwnd), MONITOR_DEFAULTTONEAREST)
+        if not monitor:
+            return None
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None
+        rect = info.rcMonitor
+        if rect.right <= rect.left or rect.bottom <= rect.top:
+            return None
+        return int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
     except Exception:
         return None
 

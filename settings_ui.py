@@ -277,6 +277,7 @@ class SettingsWindow(tk.Toplevel):
         behavior = self._section(body, "Behavior")
         for attr, label in (
             ("always_on_top", "Always on top"),
+            ("hide_on_fullscreen", "Hide when another app is fullscreen"),
             ("click_through", "Click-through"),
             ("notify_grok_relogin", "Notify when Grok needs re-login"),
         ):

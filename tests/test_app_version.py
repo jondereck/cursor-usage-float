@@ -15,8 +15,8 @@ from app_version import (
 
 def test_load_release_info_from_version_json() -> None:
     release = load_release_info()
-    assert release.version == "1.2.4"
-    assert release.date == "2026-11-05"
+    assert release.version == "1.2.5"
+    assert release.date == "2026-11-06"
     assert release.title
 
 

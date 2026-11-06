@@ -112,6 +112,37 @@ def test_position_after_resize_flips_up_near_bottom() -> None:
     assert y + 420 == 980 + 36
 
 
+def test_position_after_resize_keeps_pill_on_taskbar_when_size_unchanged() -> None:
+    # Work-area clamping used to yank this up to y=1004.
+    x, y = position_after_resize(
+        600,
+        1042,
+        old_width=110,
+        old_height=36,
+        new_width=110,
+        new_height=36,
+        bounds=(0, 0, 1920, 1080),
+    )
+    assert (x, y) == (600, 1042)
+
+
+def test_position_after_resize_anchor_bottom_on_taskbar() -> None:
+    # Pill sits on the taskbar (below rcWork); bottom edge must stay put.
+    x, y = position_after_resize(
+        600,
+        1042,
+        old_width=110,
+        old_height=36,
+        new_width=300,
+        new_height=420,
+        bounds=(0, 0, 1920, 1040),
+        anchor_bottom=True,
+        monitor_bottom=1080,
+    )
+    assert x == 600
+    assert y + 420 == 1042 + 36
+
+
 def test_position_after_resize_flips_left_near_right_edge() -> None:
     x, y = position_after_resize(
         1800,
