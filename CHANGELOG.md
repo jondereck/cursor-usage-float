@@ -2,6 +2,16 @@
 
 Bump `version.json` when you add a section (newest first).
 
+## 1.2.7 — 2026-11-18
+
+### Changed
+- **Grok percentages now show one decimal** (e.g. `79.2%`), matching Cursor Models,
+  in both Grok rows and in the pill. This is display precision only — the
+  underlying value is unchanged.
+- **Pill de-duplicates the same account.** When Cursor Models and Grok (grok.com)
+  are signed into the same email, the pill keeps only the **Grok (X)** icon and
+  hides the Cursor one. The expanded rows still show both.
+
 ## 1.2.6 — 2026-11-18
 
 ### Added

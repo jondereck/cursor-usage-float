@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import font as tkfont
 
-from account_slots import cursor_slot_label, short_email_display
+from account_slots import cursor_slot_label, same_account_email, short_email_display
 from cursor_auth import AuthError, get_access_token, read_access_token_from_file, token_fingerprint
 from cursor_identity import get_cursor_account_info
 from grok_app_usage import (
@@ -611,10 +611,12 @@ class UsageFloater(tk.Tk):
         )
         self.total_row_secondary.configure(bg=CARD)
 
-        self.grok_bot_row = ProgressRow(self.expanded, "Grok Bot (Cursor)", hero=True)
+        self.grok_bot_row = ProgressRow(
+            self.expanded, "Grok Bot (Cursor)", hero=True, precise=True
+        )
         self.grok_bot_row.configure(bg=CARD)
 
-        self.grok_premium_row = ProgressRow(self.expanded, "Grok", hero=True)
+        self.grok_premium_row = ProgressRow(self.expanded, "Grok", hero=True, precise=True)
         self.grok_premium_row.configure(bg=CARD)
         self.grok_login_btn_frame = tk.Frame(self.expanded, bg=CARD)
         self.grok_login_btn = tk.Button(
@@ -1625,6 +1627,17 @@ class UsageFloater(tk.Tk):
     def _pill_grok_half(self) -> bool:
         return self._pill_grok_bot_half()
 
+    def _pill_hide_cursor_for_grok_com(self) -> bool:
+        """Drop Cursor's pill icon when Grok.com is the same signed-in account.
+
+        Expanded rows stay untouched — this only de-duplicates the pill.
+        """
+        if not self._pill_grok_com_half():
+            return False
+        cursor_email = getattr(self._cursor_account, "email", None)
+        grok_email = getattr(self._last_grok_app, "email", None)
+        return same_account_email(cursor_email, grok_email)
+
     def _pill_antigravity_half(self) -> bool:
         """True when Antigravity usage should appear in the pill."""
         return (
@@ -2120,6 +2133,8 @@ class UsageFloater(tk.Tk):
         show_anti = self._pill_antigravity_half()
         show_codex = self._pill_codex_half()
         show_opencode = self._pill_opencode_half()
+        hide_cursor = self._pill_hide_cursor_for_grok_com()
+        show_cursor = not hide_cursor
         metric = effective_pill_metric(self.settings)
 
         # Cursor icon+% when online (Grok / Antigravity / Codex / OpenCode only when on).
@@ -2127,10 +2142,10 @@ class UsageFloater(tk.Tk):
         if show_grok or show_grok_com or show_anti or show_codex or show_opencode or metric != "pace":
             grok_text = "—%"
             if show_grok and self._last_grok_bot is not None:
-                grok_text = format_usage_percent(self._last_grok_bot.usage_percent)
+                grok_text = format_cursor_usage_percent(self._last_grok_bot.usage_percent)
             grok_com_text = "—%"
             if show_grok_com and self._last_grok_app is not None:
-                grok_com_text = format_usage_percent(self._last_grok_app.usage_percent)
+                grok_com_text = format_cursor_usage_percent(self._last_grok_app.usage_percent)
             anti_text = "—%"
             if show_anti and self._last_antigravity is not None:
                 anti_text = format_usage_percent(self._last_antigravity.usage_percent)
@@ -2144,7 +2159,7 @@ class UsageFloater(tk.Tk):
             view.update(
                 {
                     "layout": "icons",
-                    "show_cursor": True,
+                    "show_cursor": show_cursor,
                     "show_grok": show_grok,
                     "show_grok_com": show_grok_com,
                     "show_antigravity": show_anti,
@@ -2156,7 +2171,7 @@ class UsageFloater(tk.Tk):
                     "antigravity_text": anti_text,
                     "codex_text": codex_text,
                     "opencode_text": opencode_text,
-                    "text": cursor_txt,
+                    "text": cursor_txt if show_cursor else grok_com_text,
                     "number_color": TEXT,
                     "ring_extent": 0.0,
                     "show_badge": False,

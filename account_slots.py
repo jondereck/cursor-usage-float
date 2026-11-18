@@ -14,6 +14,17 @@ def short_email_display(email: str) -> str:
     return text
 
 
+def same_account_email(first: str | None, second: str | None) -> bool:
+    """True when both emails are present and refer to the same account.
+
+    Used by the pill to avoid showing Cursor Models and Grok (grok.com) twice
+    when they are signed into the same email.
+    """
+    a = (first or "").strip().lower()
+    b = (second or "").strip().lower()
+    return bool(a and b and "@" in a and "@" in b and a == b)
+
+
 def format_cursor_account_title(email: str | None, *, prefix: str = "Cursor") -> str:
     if not email or "@" not in email:
         return f"{prefix} Models"
