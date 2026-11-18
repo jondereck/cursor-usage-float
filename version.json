@@ -1,5 +1,5 @@
 {
-  "version": "1.2.5",
-  "date": "2026-11-06",
-  "title": "Taskbar-docked pill stays put; hide on true fullscreen"
+  "version": "1.2.6",
+  "date": "2026-11-18",
+  "title": "Extras Always on Top + monitor-aware fullscreen hide"
 }

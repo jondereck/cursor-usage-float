@@ -187,6 +187,41 @@ def set_window_pos(hwnd: int, x: int, y: int) -> bool:
         return False
 
 
+def reassert_topmost(hwnd: int) -> None:
+    """Re-apply HWND_TOPMOST without moving, resizing or activating the window."""
+    if sys.platform != "win32" or not hwnd:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        HWND_TOPMOST = -1
+        SWP_NOSIZE = 0x0001
+        SWP_NOMOVE = 0x0002
+        SWP_NOACTIVATE = 0x0010
+        user32 = ctypes.windll.user32
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND,
+            wintypes.HWND,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.UINT,
+        ]
+        user32.SetWindowPos(
+            int(hwnd),
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE,
+        )
+    except Exception:
+        return
+
+
 TRANSPARENT_KEY = (255, 0, 255)  # magenta — never used in pill chrome
 
 

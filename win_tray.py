@@ -55,6 +55,7 @@ ID_SETTINGS = 1002
 ID_ENABLE_STARTUP = 1003
 ID_START_MINIMIZED = 1004
 ID_QUIT = 1005
+ID_ALWAYS_ON_TOP = 1006
 
 QUIT_ARM_DELAY_MS = 400
 
@@ -119,6 +120,8 @@ class TrayIcon:
         is_start_minimized: Callable[[], bool] | None = None,
         set_start_with_windows: Callable[[bool], None] | None = None,
         set_start_minimized: Callable[[bool], None] | None = None,
+        is_always_on_top: Callable[[], bool] | None = None,
+        set_always_on_top: Callable[[bool], None] | None = None,
     ) -> None:
         self._master = master
         self._tip = tip
@@ -132,6 +135,8 @@ class TrayIcon:
         self._is_start_minimized = is_start_minimized or (lambda: False)
         self._set_start_with_windows = set_start_with_windows
         self._set_start_minimized = set_start_minimized
+        self._is_always_on_top = is_always_on_top or (lambda: False)
+        self._set_always_on_top = set_always_on_top
         self._visible = False
         self._hwnd = 0
         self._hicon = 0
@@ -504,8 +509,13 @@ class TrayIcon:
         if extras is None:
             return
         extras.delete(0, "end")
+        aot = "✓  " if self._is_always_on_top() else "    "
         sw = "✓  " if self._is_start_with_windows() else "    "
         sm = "✓  " if self._is_start_minimized() else "    "
+        extras.add_command(
+            label=f"{aot}Always on Top",
+            command=self._toggle_always_on_top,
+        )
         extras.add_command(
             label=f"{sw}Enable at Startup",
             command=self._toggle_start_with_windows,
@@ -604,6 +614,11 @@ class TrayIcon:
 
     def _on_menu_unmap(self, _event: object = None) -> None:
         self._menu_open = False
+
+    def _toggle_always_on_top(self) -> None:
+        if self._set_always_on_top is None:
+            return
+        self._set_always_on_top(not self._is_always_on_top())
 
     def _toggle_start_with_windows(self) -> None:
         if self._set_start_with_windows is None:

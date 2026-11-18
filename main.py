@@ -115,6 +115,7 @@ from win_clickthrough import (
     get_monitor_work_area,
     get_window_pos,
     get_window_rect,
+    reassert_topmost,
     set_click_through,
     set_color_key,
     set_layered_attrs,
@@ -122,7 +123,7 @@ from win_clickthrough import (
     set_window_pos,
     toplevel_hwnd,
 )
-from win_fullscreen import is_foreground_app_fullscreen
+from win_fullscreen import is_foreground_app_fullscreen_on_monitor
 from win_taskbar import apply_taskbar_button
 from win_tray import TrayIcon
 from win_hotkey import GlobalHotkey
@@ -517,6 +518,8 @@ class UsageFloater(tk.Tk):
             is_start_minimized=lambda: bool(self.settings.start_minimized),
             set_start_with_windows=self._tray_set_start_with_windows,
             set_start_minimized=self._tray_set_start_minimized,
+            is_always_on_top=lambda: bool(self.settings.always_on_top),
+            set_always_on_top=self._tray_set_always_on_top,
         )
         self._apply_settings_side_effects()
         self._apply_layout(animate=False)
@@ -967,6 +970,12 @@ class UsageFloater(tk.Tk):
         except tk.TclError:
             pass
         self._hide_from_taskbar()
+        if self._hidden_for_fullscreen:
+            # Keep a true fullscreen app unobstructed until it exits fullscreen.
+            try:
+                self.withdraw()
+            except tk.TclError:
+                pass
 
     def _tray_set_start_with_windows(self, enabled: bool) -> None:
         self.settings.start_with_windows = bool(enabled)
@@ -976,6 +985,14 @@ class UsageFloater(tk.Tk):
     def _tray_set_start_minimized(self, enabled: bool) -> None:
         self.settings.start_minimized = bool(enabled)
         save_settings(self.settings)
+
+    def _tray_set_always_on_top(self, enabled: bool) -> None:
+        """Extras toggle — same persisted setting as Settings → Always on top."""
+        self.settings.always_on_top = bool(enabled)
+        save_settings(self.settings)
+        self._apply_settings_side_effects()
+        if self._settings_win is not None and self._settings_win.winfo_exists():
+            self._settings_win.sync_from_settings(self.settings)
 
     def _toggle_minimized(self) -> None:
         if self._animating:
@@ -2493,28 +2510,23 @@ class UsageFloater(tk.Tk):
         self.after(400, self._fullscreen_tick)
 
     def _update_fullscreen_visibility(self) -> None:
-        """Withdraw while a video/browser app covers the monitor (YouTube, etc.)."""
+        """Withdraw only while a true fullscreen app covers the pill's monitor.
+
+        Fullscreen on a different monitor leaves the pill visible. A maximized
+        window (even a browser playing a video) is not fullscreen — it stops at
+        the taskbar — so the pill no longer vanishes randomly.
+        """
         if sys.platform != "win32":
             return
         if self._settings_open:
             return
-        if not bool(self.settings.hide_on_fullscreen):
-            if self._hidden_for_fullscreen:
-                self._hidden_for_fullscreen = False
-                try:
-                    self.deiconify()
-                except tk.TclError:
-                    pass
-                try:
-                    self.attributes("-topmost", bool(self.settings.always_on_top))
-                except tk.TclError:
-                    pass
-            return
         our_hwnd = toplevel_hwnd(self)
-        hide = is_foreground_app_fullscreen(
-            our_hwnd,
-            exclude_process_ids=frozenset({self._our_process_id}),
-        )
+        hide = False
+        if bool(self.settings.hide_on_fullscreen) and our_hwnd:
+            hide = is_foreground_app_fullscreen_on_monitor(
+                our_hwnd,
+                exclude_process_ids=frozenset({self._our_process_id}),
+            )
         if hide and not self._hidden_for_fullscreen:
             self._hidden_for_fullscreen = True
             try:
@@ -2534,6 +2546,14 @@ class UsageFloater(tk.Tk):
                 pass
             if self._show_pill_mode():
                 self.after_idle(self._redraw_pill_face)
+        # Keep the floater above other windows without stealing focus.
+        if not hide and our_hwnd and self.settings.always_on_top:
+            menu_open = bool(
+                self._tray is not None
+                and getattr(self._tray, "_menu_open", False)
+            )
+            if not menu_open:
+                reassert_topmost(our_hwnd)
 
     def _schedule_stale_check(self) -> None:
         if not self._show_pill_mode():

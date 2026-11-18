@@ -8,6 +8,13 @@ _QUNS_RUNNING_D3D_FULL_SCREEN = 3
 _QUNS_PRESENTATION_MODE = 4
 _GA_ROOT = 2
 
+# Explorer's desktop/taskbar windows cover a whole monitor but are NOT an app
+# taking over the screen. Without this, clicking the taskbar (or a File Explorer
+# window) makes explorer.exe the foreground process and the pill hides itself.
+_SHELL_WINDOW_CLASSES = frozenset(
+    {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
+)
+
 
 def window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
     """Return ``(left, top, right, bottom)`` for an HWND."""
@@ -128,6 +135,27 @@ def _monitor_rect_for_window(hwnd: int) -> tuple[int, int, int, int] | None:
         return None
 
 
+def window_class_name(hwnd: int) -> str:
+    """Win32 class name of a window (empty when unavailable / off Windows)."""
+    if sys.platform != "win32" or not hwnd:
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        buffer = ctypes.create_unicode_buffer(64)
+        user32 = ctypes.windll.user32
+        user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user32.GetClassNameW(int(hwnd), buffer, 64)
+        return str(buffer.value)
+    except Exception:
+        return ""
+
+
+def is_shell_window(hwnd: int) -> bool:
+    return window_class_name(hwnd) in _SHELL_WINDOW_CLASSES
+
+
 def _is_window_true_fullscreen(hwnd: int, *, tolerance: int) -> bool:
     if sys.platform != "win32" or not hwnd:
         return False
@@ -136,6 +164,8 @@ def _is_window_true_fullscreen(hwnd: int, *, tolerance: int) -> bool:
 
         user32 = ctypes.windll.user32
         handle = int(hwnd)
+        if is_shell_window(handle):
+            return False
         if not user32.IsWindowVisible(handle):
             return False
         if user32.IsIconic(handle):
@@ -202,15 +232,17 @@ def is_foreground_app_fullscreen(
         user32 = ctypes.windll.user32
         our = int(our_hwnd) if our_hwnd else 0
 
+        fg = _foreground_window_handle()
+        if not fg or fg == our:
+            return False
+        # Taskbar / desktop / File Explorer focus must never count as fullscreen.
+        if is_shell_window(fg):
+            return False
+
         if session_reports_fullscreen():
-            fg = int(user32.GetForegroundWindow() or 0)
             fg_pid = window_process_id(fg) if fg else None
             if fg_pid is None or fg_pid not in exclude:
                 return True
-
-        fg = int(user32.GetForegroundWindow() or 0)
-        if not fg or fg == our:
-            return False
 
         fg_pid = window_process_id(fg)
         if fg_pid is not None and fg_pid in exclude:
@@ -231,3 +263,57 @@ def is_foreground_app_fullscreen(
         return False
     except Exception:
         return False
+
+
+def monitor_handle_for_window(hwnd: int) -> int | None:
+    """HMONITOR hosting ``hwnd`` (nearest monitor), or None off Windows."""
+    if sys.platform != "win32" or not hwnd:
+        return None
+    try:
+        import ctypes
+
+        MONITOR_DEFAULTTONEAREST = 2
+        user32 = ctypes.windll.user32
+        handle = int(user32.MonitorFromWindow(int(hwnd), MONITOR_DEFAULTTONEAREST) or 0)
+        return handle or None
+    except Exception:
+        return None
+
+
+def is_foreground_app_fullscreen_on_monitor(
+    our_hwnd: int,
+    *,
+    exclude_process_ids: set[int] | frozenset[int] | None = None,
+    tolerance: int = 24,
+) -> bool:
+    """True only when true fullscreen covers the monitor hosting ``our_hwnd``.
+
+    A fullscreen app on a *different* monitor must not hide our floater.
+    """
+    if not is_foreground_app_fullscreen(
+        our_hwnd,
+        exclude_process_ids=exclude_process_ids,
+        tolerance=tolerance,
+    ):
+        return False
+    if sys.platform != "win32":
+        return False
+    foreground = _foreground_window_handle()
+    if not foreground:
+        return False
+    foreground_monitor = monitor_handle_for_window(foreground)
+    our_monitor = monitor_handle_for_window(our_hwnd)
+    if foreground_monitor is None or our_monitor is None:
+        return False
+    return foreground_monitor == our_monitor
+
+
+def _foreground_window_handle() -> int:
+    if sys.platform != "win32":
+        return 0
+    try:
+        import ctypes
+
+        return int(ctypes.windll.user32.GetForegroundWindow() or 0)
+    except Exception:
+        return 0

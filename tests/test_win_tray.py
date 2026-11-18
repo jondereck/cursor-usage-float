@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from win_tray import (
+    ID_ALWAYS_ON_TOP,
     ID_CURSOR_USAGE,
     ID_ENABLE_STARTUP,
     ID_QUIT,
@@ -74,9 +75,50 @@ def test_tray_menu_command_ids_are_distinct() -> None:
         ID_ENABLE_STARTUP,
         ID_START_MINIMIZED,
         ID_QUIT,
+        ID_ALWAYS_ON_TOP,
     }
-    assert len(ids) == 5
+    assert len(ids) == 6
     assert ID_QUIT != ID_CURSOR_USAGE
+
+
+class _FakeMenu:
+    def __init__(self) -> None:
+        self.commands: list[dict[str, object]] = []
+
+    def delete(self, _start: object, _end: object) -> None:
+        self.commands.clear()
+
+    def add_command(self, **kwargs: object) -> None:
+        self.commands.append(kwargs)
+
+
+def test_extras_always_on_top_check_follows_setting() -> None:
+    tray = TrayIcon.__new__(TrayIcon)
+    tray._extras_menu = _FakeMenu()  # type: ignore[assignment]
+    tray._is_start_with_windows = lambda: False  # type: ignore[method-assign]
+    tray._is_start_minimized = lambda: False  # type: ignore[method-assign]
+    state = {"aot": True}
+    tray._is_always_on_top = lambda: state["aot"]  # type: ignore[method-assign]
+
+    tray._refresh_extras_checks()
+    labels = [str(item["label"]) for item in tray._extras_menu.commands]  # type: ignore[union-attr]
+    assert any(label.endswith("Always on Top") and label.startswith("✓") for label in labels)
+
+    state["aot"] = False
+    tray._refresh_extras_checks()
+    labels = [str(item["label"]) for item in tray._extras_menu.commands]  # type: ignore[union-attr]
+    assert any(label == "    Always on Top" for label in labels)
+
+
+def test_toggle_always_on_top_sends_inverted_value() -> None:
+    tray = TrayIcon.__new__(TrayIcon)
+    calls: list[bool] = []
+    tray._is_always_on_top = lambda: True  # type: ignore[method-assign]
+    tray._set_always_on_top = calls.append  # type: ignore[method-assign]
+
+    tray._toggle_always_on_top()
+
+    assert calls == [False]
 
 
 def test_checked_menu_flags_toggle_mf_checked() -> None:

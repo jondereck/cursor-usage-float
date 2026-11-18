@@ -2,6 +2,20 @@
 
 Bump `version.json` when you add a section (newest first).
 
+## 1.2.6 — 2026-11-18
+
+### Added
+- **Extras → Always on Top** toggle, synced with **Settings → Behavior → Always on top**.
+  Keeps the float above other windows (topmost is re-asserted without stealing focus).
+
+### Fixed
+- **Pill no longer disappears when you click the taskbar.** Explorer's desktop /
+  taskbar windows cover a whole monitor but are not a fullscreen app; they are
+  now excluded from fullscreen detection (also covers File Explorer focus).
+- **Fullscreen auto-hide is monitor-aware.** A fullscreen app on another monitor
+  no longer hides the pill; it only hides when the fullscreen covers the pill's
+  own monitor. Maximized windows still never count as fullscreen.
+
 ## 1.2.5 — 2026-11-06
 
 ### Fixed
